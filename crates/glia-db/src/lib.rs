@@ -147,7 +147,12 @@ impl GliaDb {
             }
             Connection::Remote(addr) => {
                 tracing::info!(addr = %addr, "connecting remote ws");
-                surrealdb::engine::any::connect(format!("ws://{addr}")).await?
+                let url = if addr.contains("://") {
+                    addr
+                } else {
+                    format!("ws://{addr}")
+                };
+                surrealdb::engine::any::connect(url).await?
             }
             Connection::Memory => {
                 tracing::info!("connecting in-memory");

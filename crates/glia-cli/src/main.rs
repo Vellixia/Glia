@@ -104,7 +104,12 @@ pub enum Cmd {
         #[command(subcommand)]
         op: ChunkOp,
         /// Path to the local SurrealKV data directory.
-        #[arg(long, env = "GLIA_LOCAL_DB", default_value = "./.glia/local.db", global = true)]
+        #[arg(
+            long,
+            env = "GLIA_LOCAL_DB",
+            default_value = "./.glia/local.db",
+            global = true
+        )]
         local: PathBuf,
         /// Repo root to scan for `./skills/*.md` (default: `.`).
         #[arg(long, env = "GLIA_REPO_ROOT", default_value = ".", global = true)]
@@ -186,7 +191,11 @@ async fn main() -> anyhow::Result<()> {
         } => {
             run_use(tool, catalog_url, local).await?;
         }
-        Cmd::Chunk { op, local, repo_root } => {
+        Cmd::Chunk {
+            op,
+            local,
+            repo_root,
+        } => {
             run_chunk(op, local, repo_root).await?;
         }
     }
