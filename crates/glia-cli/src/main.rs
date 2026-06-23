@@ -215,7 +215,18 @@ async fn ensure_local_db(local: PathBuf) -> anyhow::Result<Arc<glia_db::GliaDb>>
 
 async fn run_sync(local: PathBuf, hub: String, status_only: bool) -> anyhow::Result<()> {
     let local_db = ensure_local_db(local).await?;
-    let hub_db = match glia_db::GliaDb::connect(glia_db::Connection::Remote(hub.clone())).await {
+    let conn = match (
+        std::env::var("GLIA_DB_USER").ok(),
+        std::env::var("GLIA_DB_PASS").ok(),
+    ) {
+        (Some(user), Some(pass)) => glia_db::Connection::RemoteWithAuth {
+            addr: hub.clone(),
+            user,
+            pass,
+        },
+        _ => glia_db::Connection::Remote(hub.clone()),
+    };
+    let hub_db = match glia_db::GliaDb::connect(conn).await {
         Ok(db) => Some(Arc::new(db)),
         Err(e) => {
             tracing::warn!(error = %e, "hub unreachable; running status only");

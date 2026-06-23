@@ -122,6 +122,17 @@ pub enum Connection {
     Embedded(std::path::PathBuf),
     /// Remote SurrealDB server via WebSocket.
     Remote(String),
+    /// Remote SurrealDB with explicit credentials. Use when the server runs
+    /// in authenticated mode (default for `surreal start --user X --pass Y`).
+    /// Credentials are embedded into the WS URL as `ws://user:pass@host:port`.
+    RemoteWithAuth {
+        /// `ws://host:port` (or `host:port`).
+        addr: String,
+        /// DB user.
+        user: String,
+        /// DB pass.
+        pass: String,
+    },
     /// In-memory (for tests).
     Memory,
 }
@@ -139,6 +150,18 @@ impl GliaDb {
     /// with `USE NS glia DB glia;`. We still call `use_ns/use_db` here so
     /// the typed `select`/`upsert` API works.
     pub async fn connect(conn: Connection) -> Result<Self, DbError> {
+        let needs_init = matches!(
+            conn,
+            Connection::Remote(_) | Connection::RemoteWithAuth { .. }
+        );
+        let remote_creds = if let Connection::RemoteWithAuth {
+            ref user, ref pass, ..
+        } = conn
+        {
+            Some((user.clone(), pass.clone()))
+        } else {
+            None
+        };
         let db = match conn {
             Connection::Embedded(path) => {
                 tracing::info!(path = ?path, "connecting embedded surrealkv");
@@ -154,6 +177,16 @@ impl GliaDb {
                 };
                 surrealdb::engine::any::connect(url).await?
             }
+            Connection::RemoteWithAuth { addr, user, pass } => {
+                tracing::info!(addr = %addr, user = %user, "connecting remote ws (auth)");
+                let host = if addr.contains("://") {
+                    addr.split_once("://").map(|(_, h)| h).unwrap_or(&addr)
+                } else {
+                    addr.as_str()
+                };
+                let url = format!("ws://{user}:{pass}@{host}");
+                surrealdb::engine::any::connect(url).await?
+            }
             Connection::Memory => {
                 tracing::info!("connecting in-memory");
                 surrealdb::engine::any::connect("memory").await?
@@ -162,7 +195,36 @@ impl GliaDb {
 
         db.use_ns("glia").use_db("glia").await?;
 
+        if needs_init {
+            if let Some((user, pass)) = remote_creds {
+                db.signin(surrealdb::opt::auth::Root {
+                    username: &user,
+                    password: &pass,
+                })
+                .await?;
+            }
+            Self::init_schema_on(&db).await?;
+        }
+
         Ok(Self { db })
+    }
+
+    /// Schema DDL used by both `init_schema` and the auto-init in `connect`.
+    const SCHEMA_DDL: &'static [&'static str] = &[
+        "DEFINE TABLE IF NOT EXISTS tool;",
+        "DEFINE TABLE IF NOT EXISTS cred;",
+        "DEFINE TABLE IF NOT EXISTS skill;",
+        "DEFINE TABLE IF NOT EXISTS stack;",
+        "DEFINE TABLE IF NOT EXISTS needs_auth TYPE RELATION FROM tool TO cred;",
+        "DEFINE TABLE IF NOT EXISTS applies_to_stack TYPE RELATION FROM skill TO stack;",
+    ];
+
+    /// Run the schema DDL on an already-`use_ns/use_db`-scoped `Surreal<Any>`.
+    async fn init_schema_on(db: &Surreal<Any>) -> Result<(), DbError> {
+        for stmt in Self::SCHEMA_DDL {
+            db.query(*stmt).await?;
+        }
+        Ok(())
     }
 
     /// Initialize namespace, database, and schema.
@@ -173,18 +235,7 @@ impl GliaDb {
     /// as a single-statement typed `query` call so the server-side session
     /// (set by `connect`) is in effect.
     pub async fn init_schema(&self) -> Result<(), DbError> {
-        let defines = [
-            "DEFINE TABLE IF NOT EXISTS tool;",
-            "DEFINE TABLE IF NOT EXISTS cred;",
-            "DEFINE TABLE IF NOT EXISTS skill;",
-            "DEFINE TABLE IF NOT EXISTS stack;",
-            "DEFINE TABLE IF NOT EXISTS needs_auth TYPE RELATION FROM tool TO cred;",
-            "DEFINE TABLE IF NOT EXISTS applies_to_stack TYPE RELATION FROM skill TO stack;",
-        ];
-        for stmt in defines {
-            self.db.query(stmt).await?;
-        }
-        Ok(())
+        Self::init_schema_on(&self.db).await
     }
 
     /// Upsert a tool record.
