@@ -45,6 +45,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.85
+          components: rustfmt
           targets: ${{ matrix.target }}
       - name: Cache cargo registry & build
         uses: Swatinem/rust-cache@v2
