@@ -11,9 +11,9 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use surrealdb::engine::any::Any;
 use surrealdb::RecordId;
 use surrealdb::Surreal;
+use surrealdb::engine::any::Any;
 use thiserror::Error;
 
 /// Errors from the DB layer.
@@ -184,37 +184,25 @@ impl GliaDb {
 
     /// Upsert a tool record.
     pub async fn upsert_tool(&self, id: &str, tool: Tool) -> Result<(), DbError> {
-        let _: Option<Tool> = self.db
-            .upsert(("tool", id))
-            .content(tool)
-            .await?;
+        let _: Option<Tool> = self.db.upsert(("tool", id)).content(tool).await?;
         Ok(())
     }
 
     /// Upsert an auth record.
     pub async fn upsert_auth(&self, id: &str, auth: Auth) -> Result<(), DbError> {
-        let _: Option<Auth> = self.db
-            .upsert(("cred", id))
-            .content(auth)
-            .await?;
+        let _: Option<Auth> = self.db.upsert(("cred", id)).content(auth).await?;
         Ok(())
     }
 
     /// Upsert a skill record. Supports `local::` namespacing (V16).
     pub async fn upsert_skill(&self, id: &str, skill: Skill) -> Result<(), DbError> {
-        let _: Option<Skill> = self.db
-            .upsert(("skill", id))
-            .content(skill)
-            .await?;
+        let _: Option<Skill> = self.db.upsert(("skill", id)).content(skill).await?;
         Ok(())
     }
 
     /// Upsert a stack record.
     pub async fn upsert_stack(&self, id: &str, stack: Stack) -> Result<(), DbError> {
-        let _: Option<Stack> = self.db
-            .upsert(("stack", id))
-            .content(stack)
-            .await?;
+        let _: Option<Stack> = self.db.upsert(("stack", id)).content(stack).await?;
         Ok(())
     }
 
@@ -235,11 +223,7 @@ impl GliaDb {
         };
         // Use table-resource `insert` (not record-id) so the SDK doesn't
         // clobber the struct's `in`/`out` fields with an `id` field.
-        let edges: Vec<NeedsAuthEdge> = self
-            .db
-            .insert("needs_auth")
-            .relation(vec![edge])
-            .await?;
+        let edges: Vec<NeedsAuthEdge> = self.db.insert("needs_auth").relation(vec![edge]).await?;
         tracing::debug!(count = edges.len(), "inserted needs_auth edges");
         Ok(())
     }
@@ -334,7 +318,9 @@ impl GliaDb {
             .bind(("skill_thing", skill_thing))
             .await?;
         #[derive(serde::Deserialize)]
-        struct Row { n: i64 }
+        struct Row {
+            n: i64,
+        }
         let rows: Vec<Row> = result.take(0)?;
         Ok(rows.first().map(|r| r.n as usize).unwrap_or(0))
     }
@@ -364,7 +350,11 @@ impl GliaDb {
         let rows: Vec<Row> = self.db.select("skill").await?;
         Ok(rows
             .into_iter()
-            .filter_map(|r| String::try_from(r.id.key().clone()).ok().map(|id| (id, r.skill)))
+            .filter_map(|r| {
+                String::try_from(r.id.key().clone())
+                    .ok()
+                    .map(|id| (id, r.skill))
+            })
             .collect())
     }
 

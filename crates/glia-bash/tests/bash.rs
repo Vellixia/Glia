@@ -1,7 +1,7 @@
 //! Integration tests for glia-bash. Verifies V1 (local exec works) and
 //! V9 (fallback path: denied commands don't run, path escapes rejected).
 
-use glia_bash::{is_allowed, run, BashConfig, BashError};
+use glia_bash::{BashConfig, BashError, is_allowed, run};
 
 #[tokio::test]
 async fn allowed_cmd_runs() {

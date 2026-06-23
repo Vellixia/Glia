@@ -66,10 +66,7 @@ async fn proxy_roundtrip() {
     }
     let out = String::from_utf8_lossy(&got);
     for line in &lines {
-        assert!(
-            out.contains(line),
-            "stdout missing {line:?}; got: {out:?}"
-        );
+        assert!(out.contains(line), "stdout missing {line:?}; got: {out:?}");
     }
 
     let _ = bridge.await;

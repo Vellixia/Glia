@@ -107,7 +107,10 @@ impl CatalogSource for GitHubCatalog {
             .await
             .map_err(|e| CatalogError::Http(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| CatalogError::Http(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CatalogError::Http(e.to_string()))?;
         if !status.is_success() {
             return Err(CatalogError::Http(format!("{}: {}", status, text)));
         }
@@ -123,7 +126,10 @@ impl CatalogSource for GitHubCatalog {
             .await
             .map_err(|e| CatalogError::Http(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| CatalogError::Http(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CatalogError::Http(e.to_string()))?;
         if !status.is_success() {
             return Err(CatalogError::Http(format!("{}: {}", status, text)));
         }
@@ -176,10 +182,14 @@ pub async fn use_tool(
     embedder: &glia_embed::Embedder,
 ) -> Result<UseResult, CatalogError> {
     let index = source.fetch_index().await?;
-    let entry = index.find(name).ok_or_else(|| CatalogError::NotFound(name.into()))?;
+    let entry = index
+        .find(name)
+        .ok_or_else(|| CatalogError::NotFound(name.into()))?;
     let content = source.fetch_skill(entry).await?;
     let skill_id = format!("community::{}", entry.name);
-    let vector = embedder.embed(&content).map_err(|e| CatalogError::Http(e.to_string()))?;
+    let vector = embedder
+        .embed(&content)
+        .map_err(|e| CatalogError::Http(e.to_string()))?;
     let now = chrono::Utc::now().to_rfc3339();
     db.upsert_skill(
         &skill_id,
@@ -193,9 +203,14 @@ pub async fn use_tool(
     .await
     .map_err(|e| CatalogError::Db(e.to_string()))?;
     for stack in &entry.stacks {
-        db.upsert_stack(stack, glia_db::Stack { name: stack.clone() })
-            .await
-            .map_err(|e| CatalogError::Db(e.to_string()))?;
+        db.upsert_stack(
+            stack,
+            glia_db::Stack {
+                name: stack.clone(),
+            },
+        )
+        .await
+        .map_err(|e| CatalogError::Db(e.to_string()))?;
         db.relate_skill_applies_to_stack(&skill_id, stack)
             .await
             .map_err(|e| CatalogError::Db(e.to_string()))?;
@@ -234,7 +249,10 @@ mod tests {
 
     fn stub() -> StubCatalog {
         let mut skills = HashMap::new();
-        skills.insert("linear-create-issue".into(), "# Linear Create Issue\n\nUse OAuth.".into());
+        skills.insert(
+            "linear-create-issue".into(),
+            "# Linear Create Issue\n\nUse OAuth.".into(),
+        );
         StubCatalog {
             index: CatalogIndex {
                 version: 1,
@@ -246,7 +264,10 @@ mod tests {
 
     #[test]
     fn catalog_index_find() {
-        let idx = CatalogIndex { version: 1, tools: vec![entry("foo", vec![])] };
+        let idx = CatalogIndex {
+            version: 1,
+            tools: vec![entry("foo", vec![])],
+        };
         assert!(idx.find("foo").is_some());
         assert!(idx.find("bar").is_none());
     }
@@ -272,7 +293,9 @@ mod tests {
         let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
         let emb = glia_embed::Embedder::new().unwrap();
-        let result = use_tool(&s, "linear-create-issue", &db, &emb).await.unwrap();
+        let result = use_tool(&s, "linear-create-issue", &db, &emb)
+            .await
+            .unwrap();
         assert_eq!(result.skill_id, "community::linear-create-issue");
         assert_eq!(result.required_creds, vec!["linear"]);
         let skill = db.get_skill(&result.skill_id).await.unwrap().unwrap();
@@ -303,9 +326,15 @@ mod tests {
         let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
         let emb = glia_embed::Embedder::new().unwrap();
-        use_tool(&s, "linear-create-issue", &db, &emb).await.unwrap();
+        use_tool(&s, "linear-create-issue", &db, &emb)
+            .await
+            .unwrap();
         let stacks = db.skills_for_stack("nextjs").await.unwrap();
-        assert!(stacks.iter().any(|s| s.source.contains("linear-create-issue")));
+        assert!(
+            stacks
+                .iter()
+                .any(|s| s.source.contains("linear-create-issue"))
+        );
     }
 
     #[test]

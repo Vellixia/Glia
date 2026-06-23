@@ -71,22 +71,25 @@ impl BashConfig {
     /// Default safe allow-list: echo, ls, cat, pwd, mkdir, test, cargo test,
     /// npm test, pnpm test, git status/diff/log. Strict — no rm, no curl.
     pub fn default_safe(root: impl Into<PathBuf>) -> Result<Self, BashError> {
-        Self::new(root, &[
-            r"^echo\b",
-            r"^ls\b",
-            r"^cat\b",
-            r"^pwd\b",
-            r"^mkdir\b",
-            r"^test\b",
-            r"^cargo test\b",
-            r"^cargo build\b",
-            r"^cargo check\b",
-            r"^npm test\b",
-            r"^pnpm test\b",
-            r"^git status\b",
-            r"^git diff\b",
-            r"^git log\b",
-        ])
+        Self::new(
+            root,
+            &[
+                r"^echo\b",
+                r"^ls\b",
+                r"^cat\b",
+                r"^pwd\b",
+                r"^mkdir\b",
+                r"^test\b",
+                r"^cargo test\b",
+                r"^cargo build\b",
+                r"^cargo check\b",
+                r"^npm test\b",
+                r"^pnpm test\b",
+                r"^git status\b",
+                r"^git diff\b",
+                r"^git log\b",
+            ],
+        )
     }
 }
 
@@ -166,10 +169,7 @@ fn normalize(path: &Path) -> PathBuf {
         match comp {
             Component::CurDir => {}
             Component::ParentDir => {
-                let pop_ok = matches!(
-                    out.components().next_back(),
-                    Some(Component::Normal(_))
-                );
+                let pop_ok = matches!(out.components().next_back(), Some(Component::Normal(_)));
                 if pop_ok {
                     out.pop();
                 } else {

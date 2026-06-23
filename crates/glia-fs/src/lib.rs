@@ -139,10 +139,7 @@ fn normalize(path: &Path) -> PathBuf {
             Component::CurDir => {}
             Component::ParentDir => {
                 // Only pop if the last component is a normal (not root/prefix).
-                let pop_ok = matches!(
-                    out.components().next_back(),
-                    Some(Component::Normal(_))
-                );
+                let pop_ok = matches!(out.components().next_back(), Some(Component::Normal(_)));
                 if pop_ok {
                     out.pop();
                 } else {
@@ -180,7 +177,9 @@ mod tests {
         let p = normalize(Path::new("/../x"));
         // Should either be `/x` (Unix) or contain `..` (Windows prefix root).
         assert!(
-            p == Path::new("/x") || p.components().any(|c| matches!(c, std::path::Component::ParentDir)),
+            p == Path::new("/x")
+                || p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir)),
             "expected escape or root collapse, got {p:?}"
         );
     }

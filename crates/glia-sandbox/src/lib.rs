@@ -265,10 +265,7 @@ pub fn probe_runtimes(runtimes: &[Runtime]) -> Vec<ProbeResult> {
         .iter()
         .map(|&r| {
             let found = which_check(r.binary()).is_ok();
-            ProbeResult {
-                runtime: r,
-                found,
-            }
+            ProbeResult { runtime: r, found }
         })
         .collect()
 }

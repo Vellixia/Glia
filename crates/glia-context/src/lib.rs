@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use glia_action::{Action, Executor, Intent};
 use glia_db::GliaDb;
 use glia_embed::Embedder;
-use glia_synth::{Synthesizer, SynthOrchestrator};
+use glia_synth::{SynthOrchestrator, Synthesizer};
 
 /// Errors from context loading.
 #[derive(Debug, thiserror::Error)]
@@ -76,7 +76,10 @@ impl StackDetector for DefaultStackDetector {
                 stacks.push("nextjs".into());
                 stacks.push("react".into());
             }
-            "ts" | "js" if path.to_string_lossy().contains("pages/") || path.to_string_lossy().contains("app/") => {
+            "ts" | "js"
+                if path.to_string_lossy().contains("pages/")
+                    || path.to_string_lossy().contains("app/") =>
+            {
                 stacks.push("nextjs".into());
             }
             "sql" => {
@@ -147,13 +150,16 @@ impl ContextLoader {
         // Run the action pipeline (classify → embed → rank).
         // Use a stub executor — context loading doesn't execute tools.
         let executor: Arc<dyn Executor> = Arc::new(NoopExecutor);
-        let action = Action::new(self.db.clone(), self.embedder.clone(), executor)
-            .with_top_k(self.top_k);
+        let action =
+            Action::new(self.db.clone(), self.embedder.clone(), executor).with_top_k(self.top_k);
         let intent = Intent {
             query: query.clone(),
             stack: stacks.first().cloned(),
         };
-        let result = action.run(intent).await.map_err(|e| ContextError::Action(e.to_string()))?;
+        let result = action
+            .run(intent)
+            .await
+            .map_err(|e| ContextError::Action(e.to_string()))?;
 
         // Convert action's SkillMatch into synth's SkillMatch.
         let synth_matches: Vec<glia_synth::SkillMatch> = result
@@ -272,7 +278,10 @@ impl ContextWatcher {
             }
         });
 
-        Ok(Self { loader, _handle: Mutex::new(Some(handle)) })
+        Ok(Self {
+            loader,
+            _handle: Mutex::new(Some(handle)),
+        })
     }
 
     /// Stop the watcher.
@@ -310,11 +319,18 @@ mod tests {
         let v = emb.embed(content).unwrap();
         db.upsert_skill(
             id,
-            Skill { content: content.into(), source: format!("{}.md", id), embedding: v, updated_at: now.into() },
+            Skill {
+                content: content.into(),
+                source: format!("{}.md", id),
+                embedding: v,
+                updated_at: now.into(),
+            },
         )
         .await
         .unwrap();
-        db.upsert_stack(stack, Stack { name: stack.into() }).await.unwrap();
+        db.upsert_stack(stack, Stack { name: stack.into() })
+            .await
+            .unwrap();
         db.relate_skill_applies_to_stack(id, stack).await.unwrap();
     }
 
@@ -380,7 +396,10 @@ mod tests {
             synth,
             Arc::new(DefaultStackDetector),
         ));
-        let ctx = loader.load_context(Path::new("/repo/pages/index.tsx")).await.unwrap();
+        let ctx = loader
+            .load_context(Path::new("/repo/pages/index.tsx"))
+            .await
+            .unwrap();
         assert!(ctx.stacks.contains(&"nextjs".to_string()));
     }
 

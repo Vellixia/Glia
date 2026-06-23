@@ -1,5 +1,6 @@
 # release-plz config — Glia
 # Tag-driven, cross-platform, ⊥ crates.io publish for v0.1.0.
+# Targets match `.github/workflows/release.yml` (linux+macos+windows on x86_64+aarch64).
 # https://release-plz.ieni.dev/docs/
 
 [workspace]

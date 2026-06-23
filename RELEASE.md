@@ -10,13 +10,23 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-That's it. The release workflow:
+That's it. The release workflow at
+[`.github/workflows/release.yml`](.github/workflows/release.yml):
 
-1. `cargo dist build` — produces linux/macos/windows binaries for
-   `glia` and `glia-hub` (aarch64 + x86_64) plus `.deb`, `.rpm`, and
-   MSI installers.
-2. SHA-256 sums + `SHA256SUMS`.
-3. Uploads the artifacts to a GitHub Release with auto-generated notes.
+1. Builds the `glia` CLI for 5 targets in parallel:
+   - `x86_64-unknown-linux-gnu`
+   - `aarch64-unknown-linux-gnu`
+   - `x86_64-apple-darwin`
+   - `aarch64-apple-darwin`
+   - `x86_64-pc-windows-msvc`
+2. Bundles each binary with `README.md` + `LICENSE` into
+   `glia-<tag>-<target>.{tar.xz,zip}`.
+3. Uploads artifacts and creates a GitHub Release with auto-generated
+   notes.
+
+Windows `aarch64` is intentionally out of scope for v0.1.0 —
+GitHub's `windows-latest` runner is x86_64-only and MSVC ARM64
+cross-toolchain is not pre-installed.
 
 ## How a version is decided
 

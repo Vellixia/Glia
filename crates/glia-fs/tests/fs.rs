@@ -18,9 +18,7 @@ async fn write_creates_parent_dirs() {
     let tmp = tempfile::tempdir().unwrap();
     let fs = Fs::new(tmp.path());
 
-    fs.write_file("nested/deep/file.txt", "deep")
-        .await
-        .unwrap();
+    fs.write_file("nested/deep/file.txt", "deep").await.unwrap();
     let got = fs.read_file("nested/deep/file.txt").await.unwrap();
     assert_eq!(got, "deep");
 }

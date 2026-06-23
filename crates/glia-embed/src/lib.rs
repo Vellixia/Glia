@@ -9,7 +9,7 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
 use rust_embed::RustEmbed;
-use tokenizers::{tokenizer::Tokenizer, Encoding};
+use tokenizers::{Encoding, tokenizer::Tokenizer};
 
 /// Embedded model assets (weights + tokenizer + config).
 #[derive(RustEmbed)]
@@ -58,8 +58,8 @@ impl Embedder {
         let tokenizer_bytes = load_asset("tokenizer.json")?;
         let config_bytes = load_asset("config.json")?;
 
-        let config: Config = serde_json::from_slice(&config_bytes)
-            .map_err(|e| EmbedError::Config(e.to_string()))?;
+        let config: Config =
+            serde_json::from_slice(&config_bytes).map_err(|e| EmbedError::Config(e.to_string()))?;
         let vb = VarBuilder::from_buffered_safetensors(weights, DType::F32, &device)?;
         let model = BertModel::load(vb, &config)?;
 
@@ -81,7 +81,8 @@ impl Embedder {
 
     fn encode(&self, text: &str) -> Result<Encoding, EmbedError> {
         let tok = self.tokenizer.lock().expect("tokenizer poisoned");
-        tok.encode(text, true).map_err(|e| EmbedError::Tokenizer(e.to_string()))
+        tok.encode(text, true)
+            .map_err(|e| EmbedError::Tokenizer(e.to_string()))
     }
 
     fn embed_encoding(&self, enc: &Encoding) -> Result<Vector, EmbedError> {
@@ -107,7 +108,11 @@ impl Embedder {
         let counts = mask_f.sum(1)?.clamp(1e-9, f32::INFINITY)?;
         let pooled = summed.broadcast_div(&counts)?;
 
-        let norm = pooled.sqr()?.sum_keepdim(1)?.sqrt()?.clamp(1e-12, f32::INFINITY)?;
+        let norm = pooled
+            .sqr()?
+            .sum_keepdim(1)?
+            .sqrt()?
+            .clamp(1e-12, f32::INFINITY)?;
         let normalized = pooled.broadcast_div(&norm)?;
 
         let vec: Vector = normalized.squeeze(0)?.to_vec1()?;

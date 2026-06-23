@@ -6,11 +6,11 @@
 use std::net::SocketAddr;
 
 use axum::{
-    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    Router,
     extract::ConnectInfo,
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use tracing::{debug, info, warn};

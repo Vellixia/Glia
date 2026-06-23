@@ -20,11 +20,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::extract::Query;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
 /// Default timeout for OAuth callback (V14: 120 seconds).
@@ -164,12 +164,17 @@ async fn callback_handler(
 ) -> impl IntoResponse {
     let result = process_callback(q);
     let (status, body) = match &result {
-        Ok(auth) => {
-            (axum::http::StatusCode::OK, format!("Authorization received. Code: {} (state: {}). You can close this tab.", auth.code, auth.state))
-        }
-        Err(e) => {
-            (axum::http::StatusCode::BAD_REQUEST, format!("Auth error: {}", e))
-        }
+        Ok(auth) => (
+            axum::http::StatusCode::OK,
+            format!(
+                "Authorization received. Code: {} (state: {}). You can close this tab.",
+                auth.code, auth.state
+            ),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Auth error: {}", e),
+        ),
     };
     // Store result and notify waiter.
     {
@@ -210,13 +215,14 @@ mod tests {
         let port = waiter.addr().port();
         let waiter_clone = std::sync::Arc::new(waiter);
         let w = waiter_clone.clone();
-        let wait_task = tokio::spawn(async move {
-            w.wait_for_callback(AUTH_TIMEOUT).await
-        });
+        let wait_task = tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await });
 
         // Simulate OAuth redirect.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let url = format!("http://127.0.0.1:{}/callback?code=test_code&state=test_state", port);
+        let url = format!(
+            "http://127.0.0.1:{}/callback?code=test_code&state=test_state",
+            port
+        );
         let resp = reqwest::get(&url).await.unwrap();
         assert_eq!(resp.status(), 200);
         let body = resp.text().await.unwrap();
@@ -256,7 +262,10 @@ mod tests {
             tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
         };
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let url = format!("http://127.0.0.1:{}/callback?error=access_denied&error_description=user+cancelled", port);
+        let url = format!(
+            "http://127.0.0.1:{}/callback?error=access_denied&error_description=user+cancelled",
+            port
+        );
         let resp = reqwest::get(&url).await.unwrap();
         assert_eq!(resp.status(), 400);
         let err = wait_task.await.unwrap().unwrap_err();
@@ -300,7 +309,10 @@ mod tests {
             tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
         };
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let url = format!("http://127.0.0.1:{}/callback?code=abc&state=xyz&extra=ignore", port);
+        let url = format!(
+            "http://127.0.0.1:{}/callback?code=abc&state=xyz&extra=ignore",
+            port
+        );
         let resp = reqwest::get(&url).await.unwrap();
         assert_eq!(resp.status(), 200);
         let auth = wait_task.await.unwrap().unwrap();

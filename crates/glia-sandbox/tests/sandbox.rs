@@ -41,7 +41,10 @@ async fn exec_injects_env_and_purges() {
         assert!(sandbox.has_staged_secrets());
     } else {
         // npx ran (or tried to) — secrets purged regardless of success.
-        assert!(!sandbox.has_staged_secrets(), "secrets must purge after exec");
+        assert!(
+            !sandbox.has_staged_secrets(),
+            "secrets must purge after exec"
+        );
     }
 }
 
@@ -61,8 +64,5 @@ async fn mock_unwrapper_records_token() {
     let unwrapper = MockUnwrapper::new(secret_env("K", "V"));
     let mut sandbox = Sandbox::new(&unwrapper);
     sandbox.stage_token("unique-token-xyz").unwrap();
-    assert_eq!(
-        unwrapper.last_token(),
-        Some("unique-token-xyz".to_string())
-    );
+    assert_eq!(unwrapper.last_token(), Some("unique-token-xyz".to_string()));
 }

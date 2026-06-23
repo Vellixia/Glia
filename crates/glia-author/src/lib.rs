@@ -43,7 +43,11 @@ pub struct SkillFrontmatter {
 impl SkillFrontmatter {
     /// Build a frontmatter with a name + description.
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
-        Self { name: name.into(), description: description.into(), stacks: Vec::new() }
+        Self {
+            name: name.into(),
+            description: description.into(),
+            stacks: Vec::new(),
+        }
     }
 
     /// Add a stack. Builder-style.
@@ -161,11 +165,20 @@ impl Author for TemplateAuthor {
         hint_name: Option<&str>,
         hint_stacks: &[String],
     ) -> Result<SkillDoc, AuthorError> {
-        let name = hint_name.map(slugify).unwrap_or_else(|| slugify(description));
-        let body = format!("# {}\n\n{}\n", titlecase(&name.replace('-', " ")), description.trim());
+        let name = hint_name
+            .map(slugify)
+            .unwrap_or_else(|| slugify(description));
+        let body = format!(
+            "# {}\n\n{}\n",
+            titlecase(&name.replace('-', " ")),
+            description.trim()
+        );
         let mut fm = SkillFrontmatter::new(&name, description.trim());
         fm.stacks = hint_stacks.to_vec();
-        Ok(SkillDoc { frontmatter: fm, body })
+        Ok(SkillDoc {
+            frontmatter: fm,
+            body,
+        })
     }
 
     fn backend_name(&self) -> &str {
@@ -186,7 +199,11 @@ pub struct HttpAuthor {
 
 impl HttpAuthor {
     /// Build a new HTTP author.
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             api_key: api_key.into(),
@@ -237,12 +254,15 @@ impl Author for HttpAuthor {
             .await
             .map_err(|e| AuthorError::Http(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| AuthorError::Http(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| AuthorError::Http(e.to_string()))?;
         if !status.is_success() {
             return Err(AuthorError::Http(format!("{}: {}", status, text)));
         }
-        let parsed: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| AuthorError::Parse(e.to_string()))?;
+        let parsed: ChatResponse =
+            serde_json::from_str(&text).map_err(|e| AuthorError::Parse(e.to_string()))?;
         let generated = parsed
             .choices
             .into_iter()
@@ -258,7 +278,10 @@ impl Author for HttpAuthor {
         let name = hint_name.map(slugify).unwrap_or_else(|| slugify(&title));
         let mut fm = SkillFrontmatter::new(&name, description.trim());
         fm.stacks = hint_stacks.to_vec();
-        Ok(SkillDoc { frontmatter: fm, body: generated })
+        Ok(SkillDoc {
+            frontmatter: fm,
+            body: generated,
+        })
     }
 
     fn backend_name(&self) -> &str {
@@ -327,7 +350,13 @@ pub async fn register(
     };
     db.upsert_skill(&id, record).await?;
     for stack in &doc.frontmatter.stacks {
-        db.upsert_stack(stack, Stack { name: stack.clone() }).await?;
+        db.upsert_stack(
+            stack,
+            Stack {
+                name: stack.clone(),
+            },
+        )
+        .await?;
         db.relate_skill_applies_to_stack(&id, stack).await?;
     }
     Ok(id)
@@ -354,7 +383,10 @@ impl SkillAuthor {
         db: &GliaDb,
         embedder: &glia_embed::Embedder,
     ) -> Result<String, AuthorError> {
-        let doc = self.backend.author(description, hint_name, hint_stacks).await?;
+        let doc = self
+            .backend
+            .author(description, hint_name, hint_stacks)
+            .await?;
         register(&doc, db, embedder).await
     }
 }
@@ -387,7 +419,11 @@ mod tests {
     async fn template_author_produces_doc() {
         let a = TemplateAuthor;
         let doc = a
-            .author("Use zustand for React state in Next.js", Some("use-zustand"), &["nextjs".into()])
+            .author(
+                "Use zustand for React state in Next.js",
+                Some("use-zustand"),
+                &["nextjs".into()],
+            )
             .await
             .unwrap();
         assert_eq!(doc.frontmatter.name, "use-zustand");

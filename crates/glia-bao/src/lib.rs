@@ -117,7 +117,8 @@ pub trait OpenBao: Send + Sync {
     async fn transit_encrypt(&self, key_name: &str, plaintext: &[u8]) -> Result<Vec<u8>, BaoError>;
 
     /// Transit: decrypt ciphertext with the named key.
-    async fn transit_decrypt(&self, key_name: &str, ciphertext: &[u8]) -> Result<Vec<u8>, BaoError>;
+    async fn transit_decrypt(&self, key_name: &str, ciphertext: &[u8])
+    -> Result<Vec<u8>, BaoError>;
 }
 
 // ---------------- StubOpenBao ----------------
@@ -202,7 +203,10 @@ impl OpenBao for StubOpenBao {
     }
 
     async fn cubbyhole_put(&self, key: &str, secret: &Secret) -> Result<(), BaoError> {
-        self.cubbyhole.lock().await.insert(key.into(), secret.clone());
+        self.cubbyhole
+            .lock()
+            .await
+            .insert(key.into(), secret.clone());
         Ok(())
     }
 
@@ -215,14 +219,22 @@ impl OpenBao for StubOpenBao {
             .ok_or_else(|| BaoError::NotFound(format!("cubbyhole: {}", key)))
     }
 
-    async fn transit_encrypt(&self, _key_name: &str, plaintext: &[u8]) -> Result<Vec<u8>, BaoError> {
+    async fn transit_encrypt(
+        &self,
+        _key_name: &str,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, BaoError> {
         // Stub: "encrypt" = prefix with 0xFF marker + plaintext.
         let mut out = vec![0xFF];
         out.extend_from_slice(plaintext);
         Ok(out)
     }
 
-    async fn transit_decrypt(&self, _key_name: &str, ciphertext: &[u8]) -> Result<Vec<u8>, BaoError> {
+    async fn transit_decrypt(
+        &self,
+        _key_name: &str,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, BaoError> {
         // Stub: strip 0xFF marker.
         if ciphertext.is_empty() || ciphertext[0] != 0xFF {
             return Err(BaoError::Crypto("invalid ciphertext".into()));
@@ -265,7 +277,10 @@ impl HttpOpenBao {
             .await
             .map_err(|e| BaoError::Http(e.to_string()))?;
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| BaoError::Http(e.to_string()))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| BaoError::Http(e.to_string()))?;
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(BaoError::NotFound(path.into()));
         }
@@ -290,7 +305,10 @@ impl HttpOpenBao {
             .await
             .map_err(|e| BaoError::Http(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| BaoError::Http(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| BaoError::Http(e.to_string()))?;
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(BaoError::NotFound(path.into()));
         }
@@ -336,7 +354,9 @@ impl OpenBao for HttpOpenBao {
     }
 
     async fn db_read_creds(&self, role: &str) -> Result<DynamicCreds, BaoError> {
-        let resp = self.get_json(&format!("/v1/database/creds/{}", role)).await?;
+        let resp = self
+            .get_json(&format!("/v1/database/creds/{}", role))
+            .await?;
         let data = resp
             .get("data")
             .ok_or_else(|| BaoError::Api(format!("db_read_creds: no data for {}", role)))?;
@@ -348,12 +368,18 @@ impl OpenBao for HttpOpenBao {
             .get("password")
             .and_then(|v| v.as_str())
             .ok_or_else(|| BaoError::Api("db_read_creds: no password".into()))?;
-        Ok(DynamicCreds { username: username.into(), password: password.into() })
+        Ok(DynamicCreds {
+            username: username.into(),
+            password: password.into(),
+        })
     }
 
     async fn kv_get(&self, path: &str) -> Result<Secret, BaoError> {
-        let resp = self.get_json(&format!("/v1/{}/data", path.trim_start_matches('/'))).await?;
-        Self::extract_kv_data(&resp).ok_or_else(|| BaoError::Api(format!("kv_get: no data at {}", path)))
+        let resp = self
+            .get_json(&format!("/v1/{}/data", path.trim_start_matches('/')))
+            .await?;
+        Self::extract_kv_data(&resp)
+            .ok_or_else(|| BaoError::Api(format!("kv_get: no data at {}", path)))
     }
 
     async fn kv_put(&self, path: &str, secret: &Secret) -> Result<(), BaoError> {
@@ -365,7 +391,8 @@ impl OpenBao for HttpOpenBao {
 
     async fn cubbyhole_put(&self, key: &str, secret: &Secret) -> Result<(), BaoError> {
         let body = serde_json::json!({ "data": secret.data });
-        self.post_json(&format!("/v1/cubbyhole/{}", key), &body).await?;
+        self.post_json(&format!("/v1/cubbyhole/{}", key), &body)
+            .await?;
         Ok(())
     }
 
@@ -402,7 +429,11 @@ impl OpenBao for HttpOpenBao {
             .map_err(|e| BaoError::Crypto(e.to_string()))
     }
 
-    async fn transit_decrypt(&self, key_name: &str, ciphertext: &[u8]) -> Result<Vec<u8>, BaoError> {
+    async fn transit_decrypt(
+        &self,
+        key_name: &str,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, BaoError> {
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD.encode(ciphertext);
         // OpenBao expects the "vault:v1:..." prefix; we prepend a placeholder.
@@ -440,15 +471,28 @@ pub struct TokenCache {
 
 impl TokenCache {
     /// Build a new token cache.
-    pub fn new(cache: Arc<dyn Cache>, bao: Arc<dyn OpenBao>, transit_key: impl Into<String>) -> Self {
-        Self { cache, bao, transit_key: transit_key.into() }
+    pub fn new(
+        cache: Arc<dyn Cache>,
+        bao: Arc<dyn OpenBao>,
+        transit_key: impl Into<String>,
+    ) -> Self {
+        Self {
+            cache,
+            bao,
+            transit_key: transit_key.into(),
+        }
     }
 
     /// Cache an OAuth access token for a cred. Encrypts via Transit.
     pub async fn put(&self, cred_id: &str, token: &str) -> Result<(), BaoError> {
-        let ciphertext = self.bao.transit_encrypt(&self.transit_key, token.as_bytes()).await?;
+        let ciphertext = self
+            .bao
+            .transit_encrypt(&self.transit_key, token.as_bytes())
+            .await?;
         let key = glia_cache::keys::oauth_access_token(cred_id);
-        self.cache.put_bytes(&key, &ciphertext, TOKEN_CACHE_TTL).await?;
+        self.cache
+            .put_bytes(&key, &ciphertext, TOKEN_CACHE_TTL)
+            .await?;
         Ok(())
     }
 
@@ -460,7 +504,10 @@ impl TokenCache {
             Some(c) => c,
             None => return Ok(None),
         };
-        let plaintext = self.bao.transit_decrypt(&self.transit_key, &ciphertext).await?;
+        let plaintext = self
+            .bao
+            .transit_decrypt(&self.transit_key, &ciphertext)
+            .await?;
         let token = String::from_utf8(plaintext).map_err(|e| BaoError::Crypto(e.to_string()))?;
         Ok(Some(token))
     }
@@ -568,7 +615,11 @@ impl PredictivePreAuth {
             },
             Err(e) => {
                 tracing::warn!(cred = cred_id, err = %e, "pre_auth: cache put failed");
-                PreAuthResult { cred_id: cred_id.into(), wrapping_token, cached: false }
+                PreAuthResult {
+                    cred_id: cred_id.into(),
+                    wrapping_token,
+                    cached: false,
+                }
             }
         }
     }
@@ -614,7 +665,10 @@ mod tests {
         let bao = stub();
         bao.set_db_role(
             "supabase-readonly",
-            DynamicCreds { username: "glia_user".into(), password: "secret".into() },
+            DynamicCreds {
+                username: "glia_user".into(),
+                password: "secret".into(),
+            },
         )
         .await;
         let creds = bao.db_read_creds("supabase-readonly").await.unwrap();
@@ -633,7 +687,10 @@ mod tests {
     async fn stub_transit_encrypt_decrypt_round_trip() {
         let bao = stub();
         let plaintext = b"hello world";
-        let ct = bao.transit_encrypt("glia-transit", plaintext).await.unwrap();
+        let ct = bao
+            .transit_encrypt("glia-transit", plaintext)
+            .await
+            .unwrap();
         assert_eq!(ct[0], 0xFF);
         let pt = bao.transit_decrypt("glia-transit", &ct).await.unwrap();
         assert_eq!(pt, plaintext);
@@ -642,7 +699,10 @@ mod tests {
     #[tokio::test]
     async fn stub_transit_decrypt_invalid() {
         let bao = stub();
-        let err = bao.transit_decrypt("glia-transit", &[0x00, 0x01]).await.unwrap_err();
+        let err = bao
+            .transit_decrypt("glia-transit", &[0x00, 0x01])
+            .await
+            .unwrap_err();
         assert!(matches!(err, BaoError::Crypto(_)));
     }
 
@@ -651,7 +711,10 @@ mod tests {
         let bao = stub();
         let s = secret("linear", "tok_abc");
         bao.kv_put("secret/data/oauth/linear", &s).await.unwrap();
-        let wrap = bao.mint_wrapping("secret/data/oauth/linear", WRAPPING_TTL).await.unwrap();
+        let wrap = bao
+            .mint_wrapping("secret/data/oauth/linear", WRAPPING_TTL)
+            .await
+            .unwrap();
         assert!(wrap.starts_with("wrap::"));
         let unwrapped = bao.unwrap(&wrap).await.unwrap();
         assert_eq!(unwrapped.get_str("access_token"), Some("tok_abc"));

@@ -24,7 +24,11 @@ pub enum Cmd {
     /// stdio <-> WebSocket translator. Connects to the Glia Hub `/gateway`.
     Bridge {
         /// WebSocket URL of the Hub gateway (default: ws://127.0.0.1:6969/gateway).
-        #[arg(long, env = "GLIA_HUB_URL", default_value = "ws://127.0.0.1:6969/gateway")]
+        #[arg(
+            long,
+            env = "GLIA_HUB_URL",
+            default_value = "ws://127.0.0.1:6969/gateway"
+        )]
         hub_url: String,
     },
     /// Bidirectional sync between local and Hub SurrealDB (V15/V16, T22).
@@ -98,7 +102,9 @@ pub enum Cmd {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let Cli { cmd } = Cli::parse();
@@ -192,18 +198,17 @@ async fn run_sync(local: PathBuf, hub: String, status_only: bool) -> anyhow::Res
     Ok(())
 }
 
-async fn run_action(
-    intent: String,
-    stack: Option<String>,
-    local: PathBuf,
-) -> anyhow::Result<()> {
+async fn run_action(intent: String, stack: Option<String>, local: PathBuf) -> anyhow::Result<()> {
     let db = ensure_local_db(local).await?;
     let embedder = Arc::new(glia_embed::Embedder::new()?);
     let executor = Arc::new(glia_action::StubExecutor {
         response: "stub-ok".into(),
     });
     let action = glia_action::Action::new(db, embedder, executor);
-    let intent_struct = glia_action::Intent { query: intent, stack };
+    let intent_struct = glia_action::Intent {
+        query: intent,
+        stack,
+    };
     let result = action.run(intent_struct).await?;
 
     if let glia_action::Outcome::AuthRequired { deps } = &result.outcome {
@@ -236,7 +241,10 @@ pub async fn handle_auth_required(
     let url = format!("http://127.0.0.1:{}/callback", port);
     eprintln!("Waiting for OAuth callback at {}", url);
     if let Err(e) = open_browser(&url) {
-        eprintln!("Could not auto-open browser ({}). Open manually: {}", e, url);
+        eprintln!(
+            "Could not auto-open browser ({}). Open manually: {}",
+            e, url
+        );
     }
 
     match waiter.wait_for_callback(timeout).await {
@@ -285,27 +293,32 @@ async fn run_save_skill(
     let db = ensure_local_db(local).await?;
     let embedder = glia_embed::Embedder::new()?;
     let backend: Arc<dyn glia_author::Author> = match (author_url, author_key, author_model) {
-        (Some(url), Some(key), Some(model)) => Arc::new(glia_author::HttpAuthor::new(url, key, model)),
+        (Some(url), Some(key), Some(model)) => {
+            Arc::new(glia_author::HttpAuthor::new(url, key, model))
+        }
         _ => Arc::new(glia_author::TemplateAuthor),
     };
     let author = glia_author::SkillAuthor::new(backend);
     let stacks_ref: Vec<String> = hint_stacks;
     let id = author
-        .save(&description, hint_name.as_deref(), &stacks_ref, &db, &embedder)
+        .save(
+            &description,
+            hint_name.as_deref(),
+            &stacks_ref,
+            &db,
+            &embedder,
+        )
         .await?;
     println!("{}", serde_json::json!({ "id": id }));
     Ok(())
 }
 
-async fn run_use(
-    tool: String,
-    catalog_url: Option<String>,
-    local: PathBuf,
-) -> anyhow::Result<()> {
+async fn run_use(tool: String, catalog_url: Option<String>, local: PathBuf) -> anyhow::Result<()> {
     let db = ensure_local_db(local).await?;
     let embedder = glia_embed::Embedder::new()?;
-    let url = catalog_url
-        .unwrap_or_else(|| "https://raw.githubusercontent.com/AnomalyCo/community-catalog/main".into());
+    let url = catalog_url.unwrap_or_else(|| {
+        "https://raw.githubusercontent.com/AnomalyCo/community-catalog/main".into()
+    });
     let source: Box<dyn glia_catalog::CatalogSource> =
         Box::new(glia_catalog::GitHubCatalog::new(url));
     let result = glia_catalog::use_tool(source.as_ref(), &tool, &db, &embedder).await?;
@@ -341,9 +354,8 @@ mod tests {
         // Simulate a browser hitting the callback.
         let w = std::sync::Arc::new(waiter);
         let w2 = w.clone();
-        let wait_task = tokio::spawn(async move {
-            w2.wait_for_callback(Duration::from_secs(5)).await
-        });
+        let wait_task =
+            tokio::spawn(async move { w2.wait_for_callback(Duration::from_secs(5)).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         let resp = reqwest::get(&url).await.unwrap();
         assert_eq!(resp.status(), 200);

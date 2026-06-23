@@ -74,42 +74,82 @@ pub async fn scan_repo(repo_root: &Path) -> Result<Vec<DetectedStack>, InitError
                 || dev_deps.map(|d| d.contains_key(name)).unwrap_or(false)
         };
         if has_dep("next") {
-            stacks.push(DetectedStack { id: "nextjs".into(), name: "Next.js".into(), evidence: "package.json: next".into() });
+            stacks.push(DetectedStack {
+                id: "nextjs".into(),
+                name: "Next.js".into(),
+                evidence: "package.json: next".into(),
+            });
         }
         if has_dep("react") {
-            stacks.push(DetectedStack { id: "react".into(), name: "React".into(), evidence: "package.json: react".into() });
+            stacks.push(DetectedStack {
+                id: "react".into(),
+                name: "React".into(),
+                evidence: "package.json: react".into(),
+            });
         }
         if has_dep("@supabase/supabase-js") {
-            stacks.push(DetectedStack { id: "supabase".into(), name: "Supabase".into(), evidence: "package.json: @supabase/supabase-js".into() });
+            stacks.push(DetectedStack {
+                id: "supabase".into(),
+                name: "Supabase".into(),
+                evidence: "package.json: @supabase/supabase-js".into(),
+            });
         }
         if has_dep("stripe") {
-            stacks.push(DetectedStack { id: "stripe".into(), name: "Stripe".into(), evidence: "package.json: stripe".into() });
+            stacks.push(DetectedStack {
+                id: "stripe".into(),
+                name: "Stripe".into(),
+                evidence: "package.json: stripe".into(),
+            });
         }
         if stacks.is_empty() {
-            stacks.push(DetectedStack { id: "node".into(), name: "Node.js".into(), evidence: "package.json".into() });
+            stacks.push(DetectedStack {
+                id: "node".into(),
+                name: "Node.js".into(),
+                evidence: "package.json".into(),
+            });
         }
     }
     // Cargo.toml
     let cargo_toml = repo_root.join("Cargo.toml");
     if cargo_toml.is_file() {
-        stacks.push(DetectedStack { id: "rust".into(), name: "Rust".into(), evidence: "Cargo.toml".into() });
+        stacks.push(DetectedStack {
+            id: "rust".into(),
+            name: "Rust".into(),
+            evidence: "Cargo.toml".into(),
+        });
     }
     // pyproject.toml / requirements.txt
     let pyproject = repo_root.join("pyproject.toml");
     let requirements = repo_root.join("requirements.txt");
     if pyproject.is_file() || requirements.is_file() {
-        let ev = if pyproject.is_file() { "pyproject.toml" } else { "requirements.txt" };
-        stacks.push(DetectedStack { id: "python".into(), name: "Python".into(), evidence: ev.into() });
+        let ev = if pyproject.is_file() {
+            "pyproject.toml"
+        } else {
+            "requirements.txt"
+        };
+        stacks.push(DetectedStack {
+            id: "python".into(),
+            name: "Python".into(),
+            evidence: ev.into(),
+        });
     }
     // go.mod
     let go_mod = repo_root.join("go.mod");
     if go_mod.is_file() {
-        stacks.push(DetectedStack { id: "go".into(), name: "Go".into(), evidence: "go.mod".into() });
+        stacks.push(DetectedStack {
+            id: "go".into(),
+            name: "Go".into(),
+            evidence: "go.mod".into(),
+        });
     }
     // Supabase migrations dir
     let supa_migrations = repo_root.join("supabase").join("migrations");
     if supa_migrations.is_dir() && !stacks.iter().any(|s| s.id == "supabase") {
-        stacks.push(DetectedStack { id: "supabase".into(), name: "Supabase".into(), evidence: "supabase/migrations/".into() });
+        stacks.push(DetectedStack {
+            id: "supabase".into(),
+            name: "Supabase".into(),
+            evidence: "supabase/migrations/".into(),
+        });
     }
     Ok(stacks)
 }
@@ -121,7 +161,11 @@ pub async fn count_files(repo_root: &Path, limit: usize) -> Result<usize, InitEr
     Ok(count)
 }
 
-async fn count_files_recursive(dir: &Path, count: &mut usize, limit: usize) -> Result<(), InitError> {
+async fn count_files_recursive(
+    dir: &Path,
+    count: &mut usize,
+    limit: usize,
+) -> Result<(), InitError> {
     if *count >= limit {
         return Ok(());
     }
@@ -131,7 +175,11 @@ async fn count_files_recursive(dir: &Path, count: &mut usize, limit: usize) -> R
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         // Skip hidden + common ignore dirs.
-        if name_str.starts_with('.') || name_str == "node_modules" || name_str == "target" || name_str == "__pycache__" {
+        if name_str.starts_with('.')
+            || name_str == "node_modules"
+            || name_str == "target"
+            || name_str == "__pycache__"
+        {
             continue;
         }
         if path.is_dir() {
@@ -247,7 +295,11 @@ mod tests {
     #[tokio::test]
     async fn scan_nextjs_repo() {
         let dir = tmp();
-        write(&dir.join("package.json"), r#"{"dependencies":{"next":"14","react":"18"}}"#).await;
+        write(
+            &dir.join("package.json"),
+            r#"{"dependencies":{"next":"14","react":"18"}}"#,
+        )
+        .await;
         let stacks = scan_repo(&dir).await.unwrap();
         assert!(stacks.iter().any(|s| s.id == "nextjs"));
         assert!(stacks.iter().any(|s| s.id == "react"));
@@ -257,7 +309,11 @@ mod tests {
     #[tokio::test]
     async fn scan_rust_repo() {
         let dir = tmp();
-        write(&dir.join("Cargo.toml"), "[package]\nname = \"x\"\nversion = \"0.1\"\n").await;
+        write(
+            &dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1\"\n",
+        )
+        .await;
         let stacks = scan_repo(&dir).await.unwrap();
         assert!(stacks.iter().any(|s| s.id == "rust"));
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -314,14 +370,22 @@ mod tests {
 
     #[test]
     fn pending_auth_supabase() {
-        let stacks = vec![DetectedStack { id: "supabase".into(), name: "Supabase".into(), evidence: "x".into() }];
+        let stacks = vec![DetectedStack {
+            id: "supabase".into(),
+            name: "Supabase".into(),
+            evidence: "x".into(),
+        }];
         let creds = pending_auth_for_stacks(&stacks);
         assert!(creds.contains(&"supabase".to_string()));
     }
 
     #[test]
     fn pending_auth_empty_for_rust() {
-        let stacks = vec![DetectedStack { id: "rust".into(), name: "Rust".into(), evidence: "x".into() }];
+        let stacks = vec![DetectedStack {
+            id: "rust".into(),
+            name: "Rust".into(),
+            evidence: "x".into(),
+        }];
         let creds = pending_auth_for_stacks(&stacks);
         assert!(creds.is_empty());
     }
@@ -329,7 +393,11 @@ mod tests {
     #[tokio::test]
     async fn run_full_init() {
         let dir = tmp();
-        write(&dir.join("package.json"), r#"{"dependencies":{"next":"14","@supabase/supabase-js":"2"}}"#).await;
+        write(
+            &dir.join("package.json"),
+            r#"{"dependencies":{"next":"14","@supabase/supabase-js":"2"}}"#,
+        )
+        .await;
         write(&dir.join("src/app/page.tsx"), "x").await;
         let result = run(&dir).await.unwrap();
         assert!(result.stacks.iter().any(|s| s.id == "nextjs"));
@@ -343,22 +411,38 @@ mod tests {
     #[tokio::test]
     async fn install_hooks_writes_files() {
         let dir = tmp();
-        tokio::fs::create_dir_all(dir.join(".git/hooks")).await.unwrap();
-        write(&dir.join("package.json"), r#"{"dependencies":{"next":"14"}}"#).await;
+        tokio::fs::create_dir_all(dir.join(".git/hooks"))
+            .await
+            .unwrap();
+        write(
+            &dir.join("package.json"),
+            r#"{"dependencies":{"next":"14"}}"#,
+        )
+        .await;
         let (written, git_missing) = install_hooks(&dir).await.unwrap();
         assert!(!git_missing);
         assert!(written.iter().any(|p| p.contains("pre-push")));
-        assert!(written.iter().any(|p| p.contains(".claude") || p.contains("claude")));
+        assert!(
+            written
+                .iter()
+                .any(|p| p.contains(".claude") || p.contains("claude"))
+        );
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
     #[tokio::test]
     async fn install_hooks_with_skill_writes_cursor_rule() {
         let dir = tmp();
-        tokio::fs::create_dir_all(dir.join(".git/hooks")).await.unwrap();
+        tokio::fs::create_dir_all(dir.join(".git/hooks"))
+            .await
+            .unwrap();
         let db_path = dir.join(".glia/local.db");
-        tokio::fs::create_dir_all(db_path.parent().unwrap()).await.unwrap();
-        let db = glia_db::GliaDb::connect(glia_db::Connection::Embedded(db_path)).await.unwrap();
+        tokio::fs::create_dir_all(db_path.parent().unwrap())
+            .await
+            .unwrap();
+        let db = glia_db::GliaDb::connect(glia_db::Connection::Embedded(db_path))
+            .await
+            .unwrap();
         db.init_schema().await.unwrap();
         let skill = glia_db::Skill {
             content: "# Use Zustand\n".into(),

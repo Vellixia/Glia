@@ -36,9 +36,7 @@ async fn ws_gateway_echoes_text() {
     let base = spawn_hub().await;
     let ws_url = base.replacen("http://", "ws://", 1) + "/gateway";
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
-        .await
-        .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
     ws.send(Message::Text("hello hub".into())).await.unwrap();
 
     let msg = ws.next().await.unwrap().unwrap();
@@ -51,9 +49,7 @@ async fn ws_gateway_echoes_multiple() {
     let base = spawn_hub().await;
     let ws_url = base.replacen("http://", "ws://", 1) + "/gateway";
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
-        .await
-        .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
     for i in 0..5 {
         let line = format!("msg-{i}");
         ws.send(Message::Text(line.clone().into())).await.unwrap();

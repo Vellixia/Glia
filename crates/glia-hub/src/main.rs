@@ -15,6 +15,8 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0.0.0.0:3000".into())
         .parse()?;
     tracing::info!(%bind, "glia-hub starting");
-    glia_hub::serve(bind).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    glia_hub::serve(bind)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     Ok(())
 }

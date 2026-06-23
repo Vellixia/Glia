@@ -195,9 +195,16 @@ impl SyncEngine {
         let diffs = self.status().await?;
         let skipped = diffs
             .into_iter()
-            .filter(|d| d.status == SkillSyncStatus::InSync || d.status == SkillSyncStatus::LocalNamespace)
+            .filter(|d| {
+                d.status == SkillSyncStatus::InSync || d.status == SkillSyncStatus::LocalNamespace
+            })
             .count();
-        Ok(SyncResult { pulled, pushed, skipped, hub_reachable: true })
+        Ok(SyncResult {
+            pulled,
+            pushed,
+            skipped,
+            hub_reachable: true,
+        })
     }
 }
 
@@ -233,7 +240,9 @@ pub struct DisconnectFallback {
 impl DisconnectFallback {
     /// Build a new fallback queue.
     pub fn new() -> Self {
-        Self { queue: Arc::new(tokio::sync::Mutex::new(Vec::new())) }
+        Self {
+            queue: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        }
     }
 
     /// Enqueue a skill for later sync.
@@ -297,7 +306,10 @@ mod tests {
     async fn status_local_only() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("supabase-auth", skill("x", "2026-01-01")).await.unwrap();
+        local
+            .upsert_skill("supabase-auth", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote);
         let diffs = engine.status().await.unwrap();
         assert_eq!(diffs.len(), 1);
@@ -308,7 +320,10 @@ mod tests {
     async fn status_remote_only() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        remote.upsert_skill("supabase-auth", skill("x", "2026-01-01")).await.unwrap();
+        remote
+            .upsert_skill("supabase-auth", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote);
         let diffs = engine.status().await.unwrap();
         assert_eq!(diffs.len(), 1);
@@ -319,8 +334,14 @@ mod tests {
     async fn status_in_sync() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("foo", skill("x", "2026-01-01")).await.unwrap();
-        remote.upsert_skill("foo", skill("x", "2026-01-01")).await.unwrap();
+        local
+            .upsert_skill("foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
+        remote
+            .upsert_skill("foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote);
         let diffs = engine.status().await.unwrap();
         assert_eq!(diffs[0].status, SkillSyncStatus::InSync);
@@ -330,8 +351,14 @@ mod tests {
     async fn status_local_newer() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("foo", skill("x", "2026-01-02")).await.unwrap();
-        remote.upsert_skill("foo", skill("x", "2026-01-01")).await.unwrap();
+        local
+            .upsert_skill("foo", skill("x", "2026-01-02"))
+            .await
+            .unwrap();
+        remote
+            .upsert_skill("foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote);
         let diffs = engine.status().await.unwrap();
         assert_eq!(diffs[0].status, SkillSyncStatus::LocalNewer);
@@ -341,8 +368,14 @@ mod tests {
     async fn status_remote_newer() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("foo", skill("x", "2026-01-01")).await.unwrap();
-        remote.upsert_skill("foo", skill("x", "2026-01-02")).await.unwrap();
+        local
+            .upsert_skill("foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
+        remote
+            .upsert_skill("foo", skill("x", "2026-01-02"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote);
         let diffs = engine.status().await.unwrap();
         assert_eq!(diffs[0].status, SkillSyncStatus::RemoteNewer);
@@ -352,7 +385,10 @@ mod tests {
     async fn local_namespace_never_syncs() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("local::foo", skill("x", "2026-01-01")).await.unwrap();
+        local
+            .upsert_skill("local::foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote);
         let diffs = engine.status().await.unwrap();
         assert_eq!(diffs[0].status, SkillSyncStatus::LocalNamespace);
@@ -365,7 +401,10 @@ mod tests {
     async fn pull_remote_only() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        remote.upsert_skill("foo", skill("x", "2026-01-01")).await.unwrap();
+        remote
+            .upsert_skill("foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local.clone(), remote);
         let pulled = engine.pull().await.unwrap();
         assert_eq!(pulled, 1);
@@ -376,7 +415,10 @@ mod tests {
     async fn push_local_only() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("foo", skill("x", "2026-01-01")).await.unwrap();
+        local
+            .upsert_skill("foo", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local, remote.clone());
         let pushed = engine.push().await.unwrap();
         assert_eq!(pushed, 1);
@@ -387,8 +429,14 @@ mod tests {
     async fn sync_bidirectional() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("local-only", skill("x", "2026-01-01")).await.unwrap();
-        remote.upsert_skill("remote-only", skill("x", "2026-01-01")).await.unwrap();
+        local
+            .upsert_skill("local-only", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
+        remote
+            .upsert_skill("remote-only", skill("x", "2026-01-01"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local.clone(), remote.clone());
         let result = engine.sync().await.unwrap();
         assert_eq!(result.pulled, 1);
@@ -401,8 +449,14 @@ mod tests {
     async fn lww_remote_wins_on_conflict() {
         let local = empty_db().await;
         let remote = empty_db().await;
-        local.upsert_skill("foo", skill("old", "2026-01-01")).await.unwrap();
-        remote.upsert_skill("foo", skill("new", "2026-01-02")).await.unwrap();
+        local
+            .upsert_skill("foo", skill("old", "2026-01-01"))
+            .await
+            .unwrap();
+        remote
+            .upsert_skill("foo", skill("new", "2026-01-02"))
+            .await
+            .unwrap();
         let engine = SyncEngine::new(local.clone(), remote);
         engine.pull().await.unwrap();
         let skill = local.get_skill("foo").await.unwrap().unwrap();

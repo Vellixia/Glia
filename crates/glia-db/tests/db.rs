@@ -1,8 +1,8 @@
 //! Integration tests for glia-db. Verifies V1 (embedded disk persists),
 //! V10 (graph edges for stack-aware RAG), V16 (local:: namespace).
 
-use glia_db::{Auth, Connection, GliaDb, Skill, Stack, Tool};
 use chrono::Utc;
+use glia_db::{Auth, Connection, GliaDb, Skill, Stack, Tool};
 
 fn now() -> String {
     Utc::now().to_rfc3339()
@@ -25,7 +25,9 @@ async fn embedded_memory_crud() {
         params_schema: serde_json::json!({"title": "string"}),
         updated_at: now(),
     };
-    db.upsert_tool("linear-create-issue", tool.clone()).await.unwrap();
+    db.upsert_tool("linear-create-issue", tool.clone())
+        .await
+        .unwrap();
 
     let got = db.get_tool("linear-create-issue").await.unwrap();
     assert!(got.is_some());
@@ -36,19 +38,29 @@ async fn embedded_memory_crud() {
 async fn graph_edge_requires() {
     let db = setup().await;
 
-    db.upsert_tool("linear-create-issue", Tool {
-        name: "Create Issue".to_string(),
-        category: "issue-tracker".to_string(),
-        local: false,
-        params_schema: serde_json::json!({}),
-        updated_at: now(),
-    }).await.unwrap();
+    db.upsert_tool(
+        "linear-create-issue",
+        Tool {
+            name: "Create Issue".to_string(),
+            category: "issue-tracker".to_string(),
+            local: false,
+            params_schema: serde_json::json!({}),
+            updated_at: now(),
+        },
+    )
+    .await
+    .unwrap();
 
-    db.upsert_auth("linear_oauth", Auth {
-        auth_type: "oauth".to_string(),
-        provider: "linear".to_string(),
-        updated_at: now(),
-    }).await.unwrap();
+    db.upsert_auth(
+        "linear_oauth",
+        Auth {
+            auth_type: "oauth".to_string(),
+            provider: "linear".to_string(),
+            updated_at: now(),
+        },
+    )
+    .await
+    .unwrap();
 
     eprintln!("about to relate");
     db.relate_tool_requires_auth("linear-create-issue", "linear_oauth")
@@ -66,16 +78,26 @@ async fn graph_edge_requires() {
 async fn graph_edge_applies_to() {
     let db = setup().await;
 
-    db.upsert_skill("supabase-auth-rules", Skill {
-        content: "Never use service_role in route handlers.".to_string(),
-        source: "supabase-auth.md".to_string(),
-        embedding: vec![0.1, 0.2, 0.3],
-        updated_at: now(),
-    }).await.unwrap();
+    db.upsert_skill(
+        "supabase-auth-rules",
+        Skill {
+            content: "Never use service_role in route handlers.".to_string(),
+            source: "supabase-auth.md".to_string(),
+            embedding: vec![0.1, 0.2, 0.3],
+            updated_at: now(),
+        },
+    )
+    .await
+    .unwrap();
 
-    db.upsert_stack("nextjs", Stack {
-        name: "Next.js".to_string(),
-    }).await.unwrap();
+    db.upsert_stack(
+        "nextjs",
+        Stack {
+            name: "Next.js".to_string(),
+        },
+    )
+    .await
+    .unwrap();
 
     db.relate_skill_applies_to_stack("supabase-auth-rules", "nextjs")
         .await
@@ -102,7 +124,9 @@ async fn skill_upsert_with_local_namespace() {
         embedding: vec![0.5, 0.5],
         updated_at: now(),
     };
-    db.upsert_skill("local::use-zustand", local_skill).await.unwrap();
+    db.upsert_skill("local::use-zustand", local_skill)
+        .await
+        .unwrap();
 
     let got = db.get_skill("local::use-zustand").await.unwrap();
     assert!(got.is_some());

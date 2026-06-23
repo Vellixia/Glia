@@ -75,7 +75,10 @@ pub struct CachedValue<T> {
 impl<T> CachedValue<T> {
     /// Wrap a value with the current time.
     pub fn now(value: T) -> Self {
-        Self { value, created_at: chrono::Utc::now().to_rfc3339() }
+        Self {
+            value,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
     }
 }
 
@@ -165,7 +168,10 @@ impl Default for InMemoryCache {
 impl InMemoryCache {
     /// Build a new in-memory cache with no background sweeper.
     pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(HashMap::new())), sweep: Mutex::new(None) }
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            sweep: Mutex::new(None),
+        }
     }
 
     /// Spawn a background task that evicts expired entries every `interval`.
@@ -205,7 +211,13 @@ impl Cache for InMemoryCache {
 
     async fn put_bytes(&self, key: &str, value: &[u8], ttl: Duration) -> Result<(), CacheError> {
         let mut map = self.inner.lock().await;
-        map.insert(key.into(), Entry { value: value.to_vec(), expires_at: Instant::now() + ttl });
+        map.insert(
+            key.into(),
+            Entry {
+                value: value.to_vec(),
+                expires_at: Instant::now() + ttl,
+            },
+        );
         Ok(())
     }
 
@@ -229,7 +241,8 @@ pub struct RedisCache {
 impl RedisCache {
     /// Connect to Redis at the given URL (e.g., `redis://127.0.0.1:6379/0`).
     pub async fn connect(url: impl AsRef<str>) -> Result<Self, CacheError> {
-        let client = redis::Client::open(url.as_ref()).map_err(|e| CacheError::Redis(e.to_string()))?;
+        let client =
+            redis::Client::open(url.as_ref()).map_err(|e| CacheError::Redis(e.to_string()))?;
         let conn = redis::aio::ConnectionManager::new(client)
             .await
             .map_err(|e| CacheError::Redis(e.to_string()))?;
@@ -280,7 +293,10 @@ impl Cache for RedisCache {
             .await
             .map_err(|e| CacheError::Redis(e.to_string()))?;
         if pong != "PONG" {
-            return Err(CacheError::Redis(format!("unexpected ping response: {}", pong)));
+            return Err(CacheError::Redis(format!(
+                "unexpected ping response: {}",
+                pong
+            )));
         }
         Ok(())
     }
@@ -307,7 +323,9 @@ mod tests {
     #[tokio::test]
     async fn in_memory_ttl_expires() {
         let c = InMemoryCache::new();
-        c.put_bytes("k", b"v", Duration::from_millis(20)).await.unwrap();
+        c.put_bytes("k", b"v", Duration::from_millis(20))
+            .await
+            .unwrap();
         assert!(c.get_bytes("k").await.unwrap().is_some());
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(c.get_bytes("k").await.unwrap().is_none());
@@ -325,7 +343,9 @@ mod tests {
     async fn in_memory_sweeper_evicts() {
         let c = InMemoryCache::new();
         c.start_sweeper(Duration::from_millis(20)).await;
-        c.put_bytes("k", b"v", Duration::from_millis(10)).await.unwrap();
+        c.put_bytes("k", b"v", Duration::from_millis(10))
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(80)).await;
         let map = c.inner.lock().await;
         assert!(!map.contains_key("k"), "sweeper should have evicted k");
@@ -342,8 +362,14 @@ mod tests {
 
     #[test]
     fn key_builders_namespaced() {
-        assert_eq!(keys::oauth_access_token("linear"), "oauth::creds::linear::access");
-        assert_eq!(keys::oauth_refresh_token("linear"), "oauth::creds::linear::refresh");
+        assert_eq!(
+            keys::oauth_access_token("linear"),
+            "oauth::creds::linear::access"
+        );
+        assert_eq!(
+            keys::oauth_refresh_token("linear"),
+            "oauth::creds::linear::refresh"
+        );
         assert!(keys::synth_result("abc").starts_with("synth::result::abc"));
         assert_eq!(keys::auth_creds("u1"), "auth::user::u1::creds");
     }
@@ -386,7 +412,9 @@ mod tests {
         };
         c.ping().await.unwrap();
         let key = format!("glia::test::{}", keys::hash_query("ping"));
-        c.put_bytes(&key, b"hello", Duration::from_secs(5)).await.unwrap();
+        c.put_bytes(&key, b"hello", Duration::from_secs(5))
+            .await
+            .unwrap();
         let back = c.get_bytes(&key).await.unwrap();
         assert_eq!(back.as_deref(), Some(&b"hello"[..]));
         c.delete(&key).await.unwrap();

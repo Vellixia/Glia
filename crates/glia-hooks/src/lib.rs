@@ -104,7 +104,11 @@ pub fn skill_to_cursor_rule(skill: &glia_db::Skill, name: &str, globs: Vec<Strin
     let body = format!("# {}\n\n{}", name, skill.content);
     CursorRule {
         name: name.into(),
-        frontmatter: CursorRuleFrontmatter { description, globs, always_apply: false },
+        frontmatter: CursorRuleFrontmatter {
+            description,
+            globs,
+            always_apply: false,
+        },
         body,
     }
 }
@@ -166,7 +170,10 @@ pub async fn generate_claude_hooks(
 /// `supabase-auth.md::0` → `supabase-auth-0`.
 /// `local::use-zustand::1` → `local-use-zustand-1`.
 fn derive_rule_name(source: &str) -> String {
-    source.replace(".md", "").replace("::", "-").replace('/', "-")
+    source
+        .replace(".md", "")
+        .replace("::", "-")
+        .replace('/', "-")
 }
 
 /// Map stack ids to glob patterns (heuristic).
@@ -244,7 +251,10 @@ mod tests {
     #[test]
     fn derive_rule_name_strips_double_colon() {
         assert_eq!(derive_rule_name("supabase-auth.md::0"), "supabase-auth-0");
-        assert_eq!(derive_rule_name("local::use-zustand::1"), "local-use-zustand-1");
+        assert_eq!(
+            derive_rule_name("local::use-zustand::1"),
+            "local-use-zustand-1"
+        );
         assert_eq!(derive_rule_name("supabase-auth.md"), "supabase-auth");
     }
 
@@ -268,7 +278,9 @@ mod tests {
             skill("supabase-auth.md::0", "Use OAuth for Supabase."),
             skill("zustand.md::0", "Use zustand for state."),
         ];
-        let written = generate_cursor_rules(&tmp, &skills, &["nextjs".into()]).await.unwrap();
+        let written = generate_cursor_rules(&tmp, &skills, &["nextjs".into()])
+            .await
+            .unwrap();
         assert_eq!(written.len(), 2);
         for path in &written {
             let content = tokio::fs::read_to_string(path).await.unwrap();
@@ -282,7 +294,9 @@ mod tests {
     async fn generate_claude_hooks_writes_settings() {
         let tmp = std::env::temp_dir().join(format!("glia-hooks-claude-{}", uuid_v4()));
         tokio::fs::create_dir_all(&tmp).await.unwrap();
-        let path = generate_claude_hooks(&tmp, &["nextjs".into()]).await.unwrap();
+        let path = generate_claude_hooks(&tmp, &["nextjs".into()])
+            .await
+            .unwrap();
         let content = tokio::fs::read_to_string(&path).await.unwrap();
         assert!(content.contains("PreToolUse"));
         assert!(content.contains("glia context"));
@@ -291,7 +305,10 @@ mod tests {
 
     fn uuid_v4() -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         format!("{:x}", nanos)
     }
 

@@ -101,7 +101,11 @@ impl Chunker {
                 // Flush prior section.
                 if !current_body.trim().is_empty() || !current_heading.is_empty() {
                     for c in self.refine(&current_heading, &current_body) {
-                        chunks.push(Chunk { index, heading: c.0, body: c.1 });
+                        chunks.push(Chunk {
+                            index,
+                            heading: c.0,
+                            body: c.1,
+                        });
                         index += 1;
                     }
                 }
@@ -115,7 +119,11 @@ impl Chunker {
         // Trailing section.
         if !current_body.trim().is_empty() || !current_heading.is_empty() {
             for c in self.refine(&current_heading, &current_body) {
-                chunks.push(Chunk { index, heading: c.0, body: c.1 });
+                chunks.push(Chunk {
+                    index,
+                    heading: c.0,
+                    body: c.1,
+                });
                 index += 1;
             }
         }
@@ -164,7 +172,11 @@ pub struct Pipeline {
 impl Pipeline {
     /// Build a pipeline with the default chunker.
     pub fn new(db: Arc<GliaDb>, embedder: Arc<Embedder>) -> Self {
-        Self { db, embedder, chunker: Chunker::default() }
+        Self {
+            db,
+            embedder,
+            chunker: Chunker::default(),
+        }
     }
 
     /// Override the chunker.
@@ -269,9 +281,17 @@ mod tests {
             md.push_str(&format!("paragraph {} with some words.\n\n", i));
         }
         let chunks = c.split(&md);
-        assert!(chunks.len() > 1, "expected refinement, got {} chunks", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "expected refinement, got {} chunks",
+            chunks.len()
+        );
         for ch in &chunks {
-            assert!(ch.text().chars().count() <= 200, "chunk too big: {}", ch.text().chars().count());
+            assert!(
+                ch.text().chars().count() <= 200,
+                "chunk too big: {}",
+                ch.text().chars().count()
+            );
         }
     }
 
@@ -305,7 +325,13 @@ mod tests {
     async fn ingest_preserves_local_namespace() {
         let (db, emb) = setup().await;
         let pipe = Pipeline::new(db, emb);
-        let ids = pipe.ingest("local::use-zustand", "## State\nUse Zustand for global state.").await.unwrap();
+        let ids = pipe
+            .ingest(
+                "local::use-zustand",
+                "## State\nUse Zustand for global state.",
+            )
+            .await
+            .unwrap();
         assert_eq!(ids[0], "local::use-zustand::0");
         assert!(GliaDb::is_local_skill(&ids[0]));
     }
@@ -313,10 +339,21 @@ mod tests {
     #[tokio::test]
     async fn ingest_links_skill_to_stack() {
         let (db, emb) = setup().await;
-        db.upsert_stack("nextjs", Stack { name: "Next.js".into() }).await.unwrap();
+        db.upsert_stack(
+            "nextjs",
+            Stack {
+                name: "Next.js".into(),
+            },
+        )
+        .await
+        .unwrap();
         let pipe = Pipeline::new(db.clone(), emb);
-        pipe.ingest("nextjs::hooks", "## Hooks\nUse useState, useEffect.").await.unwrap();
-        db.relate_skill_applies_to_stack("nextjs::hooks::0", "nextjs").await.unwrap();
+        pipe.ingest("nextjs::hooks", "## Hooks\nUse useState, useEffect.")
+            .await
+            .unwrap();
+        db.relate_skill_applies_to_stack("nextjs::hooks::0", "nextjs")
+            .await
+            .unwrap();
         let skills = db.skills_for_stack("nextjs").await.unwrap();
         assert_eq!(skills.len(), 1);
         assert!(skills[0].content.contains("useState"));

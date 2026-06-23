@@ -140,7 +140,9 @@ impl Executor for StubExecutor {
 /// V13: local if query mentions file paths / shell; remote if mentions SaaS.
 pub fn classify(intent: &Intent) -> IntentKind {
     let q = intent.query.to_lowercase();
-    let remote_markers = ["linear", "github", "notion", "slack", "supabase", "stripe", "jira", "oauth"];
+    let remote_markers = [
+        "linear", "github", "notion", "slack", "supabase", "stripe", "jira", "oauth",
+    ];
     if remote_markers.iter().any(|m| q.contains(m)) {
         IntentKind::Remote
     } else {
@@ -175,7 +177,11 @@ pub fn rank_skills(query_vec: &[f32], skills: &[Skill], k: usize) -> Vec<SkillMa
             local: glia_db::GliaDb::is_local_skill(&s.source),
         })
         .collect();
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(k);
     scored
 }
@@ -192,7 +198,12 @@ pub struct Action {
 impl Action {
     /// Build a new action with the given deps.
     pub fn new(db: Arc<GliaDb>, embedder: Arc<Embedder>, executor: Arc<dyn Executor>) -> Self {
-        Self { db, embedder, executor, top_k: 5 }
+        Self {
+            db,
+            embedder,
+            executor,
+            top_k: 5,
+        }
     }
 
     /// Override the top-K default.
@@ -207,12 +218,16 @@ impl Action {
 
         let query_vec = self.embedder.embed(&intent.query)?;
 
-        let skills = self.discover_skills(&query_vec, intent.stack.as_deref()).await?;
+        let skills = self
+            .discover_skills(&query_vec, intent.stack.as_deref())
+            .await?;
 
         let (tools, missing) = self.dep_check(&skills, kind).await?;
 
         let outcome = if !missing.is_empty() {
-            Outcome::AuthRequired { deps: missing.clone() }
+            Outcome::AuthRequired {
+                deps: missing.clone(),
+            }
         } else if let Some(tool) = tools.first() {
             match self.executor.exec(tool, &serde_json::json!({})).await {
                 Ok(result) => Outcome::Done { result },
@@ -234,12 +249,20 @@ impl Action {
     }
 
     /// Vector-search skills; filter by stack if provided.
-    async fn discover_skills(&self, query_vec: &[f32], stack: Option<&str>) -> Result<Vec<SkillMatch>, ActionError> {
+    async fn discover_skills(
+        &self,
+        query_vec: &[f32],
+        stack: Option<&str>,
+    ) -> Result<Vec<SkillMatch>, ActionError> {
         let all = self.all_skills().await?;
         if let Some(stack_id) = stack {
             let for_stack = self.db.skills_for_stack(stack_id).await?;
-            let ids: std::collections::HashSet<String> = for_stack.into_iter().map(|s| s.source).collect();
-            let filtered: Vec<Skill> = all.into_iter().filter(|s| ids.contains(&s.source)).collect();
+            let ids: std::collections::HashSet<String> =
+                for_stack.into_iter().map(|s| s.source).collect();
+            let filtered: Vec<Skill> = all
+                .into_iter()
+                .filter(|s| ids.contains(&s.source))
+                .collect();
             Ok(rank_skills(query_vec, &filtered, self.top_k))
         } else {
             Ok(rank_skills(query_vec, &all, self.top_k))
@@ -254,7 +277,11 @@ impl Action {
     /// Graph walk: for remote intents, find tools that require auth.
     /// Returns the matching tools and any creds that the caller must
     /// present before exec. Local intents need no cred (V3).
-    async fn dep_check(&self, _skills: &[SkillMatch], kind: IntentKind) -> Result<(Vec<Tool>, Vec<MissingDep>), ActionError> {
+    async fn dep_check(
+        &self,
+        _skills: &[SkillMatch],
+        kind: IntentKind,
+    ) -> Result<(Vec<Tool>, Vec<MissingDep>), ActionError> {
         if matches!(kind, IntentKind::Local) {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -303,9 +330,27 @@ mod tests {
 
     #[tokio::test]
     async fn classify_local_and_remote() {
-        assert_eq!(classify(&Intent { query: "cat ./README".into(), stack: None }), IntentKind::Local);
-        assert_eq!(classify(&Intent { query: "create linear issue".into(), stack: None }), IntentKind::Remote);
-        assert_eq!(classify(&Intent { query: "what is rust".into(), stack: None }), IntentKind::Local);
+        assert_eq!(
+            classify(&Intent {
+                query: "cat ./README".into(),
+                stack: None
+            }),
+            IntentKind::Local
+        );
+        assert_eq!(
+            classify(&Intent {
+                query: "create linear issue".into(),
+                stack: None
+            }),
+            IntentKind::Remote
+        );
+        assert_eq!(
+            classify(&Intent {
+                query: "what is rust".into(),
+                stack: None
+            }),
+            IntentKind::Local
+        );
     }
 
     #[tokio::test]
@@ -332,25 +377,40 @@ mod tests {
     async fn run_returns_auth_required_when_dep_missing() {
         let (db, emb) = setup().await;
 
-        db.upsert_skill("local::auth-required-rule", Skill {
-            content: "never skip oauth".into(),
-            source: "local::auth-required-rule".into(),
-            embedding: vec![1.0, 0.0, 0.0],
-            updated_at: now(),
-        }).await.unwrap();
+        db.upsert_skill(
+            "local::auth-required-rule",
+            Skill {
+                content: "never skip oauth".into(),
+                source: "local::auth-required-rule".into(),
+                embedding: vec![1.0, 0.0, 0.0],
+                updated_at: now(),
+            },
+        )
+        .await
+        .unwrap();
 
-        db.upsert_auth("linear_oauth", Auth {
-            auth_type: "oauth".into(),
-            provider: "linear".into(),
-            updated_at: now(),
-        }).await.unwrap();
+        db.upsert_auth(
+            "linear_oauth",
+            Auth {
+                auth_type: "oauth".into(),
+                provider: "linear".into(),
+                updated_at: now(),
+            },
+        )
+        .await
+        .unwrap();
 
-        let exec = Arc::new(StubExecutor { response: "ok".into() });
+        let exec = Arc::new(StubExecutor {
+            response: "ok".into(),
+        });
         let action = Action::new(db, emb, exec);
-        let result = action.run(Intent {
-            query: "linear oauth rule".into(),
-            stack: None,
-        }).await.unwrap();
+        let result = action
+            .run(Intent {
+                query: "linear oauth rule".into(),
+                stack: None,
+            })
+            .await
+            .unwrap();
 
         assert!(!result.skills.is_empty(), "should discover the auth skill");
     }
@@ -359,42 +419,74 @@ mod tests {
     async fn run_done_when_executor_succeeds() {
         let (db, emb) = setup().await;
 
-        db.upsert_skill("local::cat-readme", Skill {
-            content: "read the readme".into(),
-            source: "local::cat-readme".into(),
-            embedding: vec![1.0, 0.0, 0.0],
-            updated_at: now(),
-        }).await.unwrap();
+        db.upsert_skill(
+            "local::cat-readme",
+            Skill {
+                content: "read the readme".into(),
+                source: "local::cat-readme".into(),
+                embedding: vec![1.0, 0.0, 0.0],
+                updated_at: now(),
+            },
+        )
+        .await
+        .unwrap();
 
-        let exec = Arc::new(StubExecutor { response: "42".into() });
+        let exec = Arc::new(StubExecutor {
+            response: "42".into(),
+        });
         let action = Action::new(db, emb, exec);
-        let result = action.run(Intent {
-            query: "cat the readme".into(),
-            stack: None,
-        }).await.unwrap();
+        let result = action
+            .run(Intent {
+                query: "cat the readme".into(),
+                stack: None,
+            })
+            .await
+            .unwrap();
 
-        assert!(matches!(result.outcome, Outcome::NotApplicable | Outcome::Done { .. }));
+        assert!(matches!(
+            result.outcome,
+            Outcome::NotApplicable | Outcome::Done { .. }
+        ));
     }
 
     #[tokio::test]
     async fn run_stack_filters_skills() {
         let (db, emb) = setup().await;
 
-        db.upsert_skill("nextjs::rule", Skill {
-            content: "next.js rule".into(),
-            source: "nextjs::rule".into(),
-            embedding: vec![1.0, 0.0, 0.0],
-            updated_at: now(),
-        }).await.unwrap();
-        db.upsert_stack("nextjs", Stack { name: "Next.js".into() }).await.unwrap();
-        db.relate_skill_applies_to_stack("nextjs::rule", "nextjs").await.unwrap();
+        db.upsert_skill(
+            "nextjs::rule",
+            Skill {
+                content: "next.js rule".into(),
+                source: "nextjs::rule".into(),
+                embedding: vec![1.0, 0.0, 0.0],
+                updated_at: now(),
+            },
+        )
+        .await
+        .unwrap();
+        db.upsert_stack(
+            "nextjs",
+            Stack {
+                name: "Next.js".into(),
+            },
+        )
+        .await
+        .unwrap();
+        db.relate_skill_applies_to_stack("nextjs::rule", "nextjs")
+            .await
+            .unwrap();
 
-        let exec = Arc::new(StubExecutor { response: "ok".into() });
+        let exec = Arc::new(StubExecutor {
+            response: "ok".into(),
+        });
         let action = Action::new(db, emb, exec);
-        let result = action.run(Intent {
-            query: "next.js".into(),
-            stack: Some("nextjs".into()),
-        }).await.unwrap();
+        let result = action
+            .run(Intent {
+                query: "next.js".into(),
+                stack: Some("nextjs".into()),
+            })
+            .await
+            .unwrap();
 
         assert!(result.skills.iter().any(|s| s.source == "nextjs::rule"));
     }
@@ -402,7 +494,10 @@ mod tests {
     #[tokio::test]
     async fn result_serializes_round_trip() {
         let r = ActionResult {
-            intent: Intent { query: "x".into(), stack: None },
+            intent: Intent {
+                query: "x".into(),
+                stack: None,
+            },
             kind: IntentKind::Local,
             skills: vec![],
             tools: vec![],
@@ -419,29 +514,46 @@ mod tests {
     async fn tool_required_missing_surfaces_auth() {
         let (db, emb) = setup().await;
 
-        db.upsert_tool("linear-create", Tool {
-            name: "Linear Create".into(),
-            category: "issue-tracker".into(),
-            local: false,
-            params_schema: serde_json::json!({}),
-            updated_at: now(),
-        }).await.unwrap();
-        db.upsert_auth("linear_oauth", Auth {
-            auth_type: "oauth".into(),
-            provider: "linear".into(),
-            updated_at: now(),
-        }).await.unwrap();
-        db.relate_tool_requires_auth("linear-create", "linear_oauth").await.unwrap();
+        db.upsert_tool(
+            "linear-create",
+            Tool {
+                name: "Linear Create".into(),
+                category: "issue-tracker".into(),
+                local: false,
+                params_schema: serde_json::json!({}),
+                updated_at: now(),
+            },
+        )
+        .await
+        .unwrap();
+        db.upsert_auth(
+            "linear_oauth",
+            Auth {
+                auth_type: "oauth".into(),
+                provider: "linear".into(),
+                updated_at: now(),
+            },
+        )
+        .await
+        .unwrap();
+        db.relate_tool_requires_auth("linear-create", "linear_oauth")
+            .await
+            .unwrap();
 
         let tools = db.tools_requiring_auth("linear_oauth").await.unwrap();
         assert_eq!(tools.len(), 1);
 
-        let exec = Arc::new(StubExecutor { response: "ok".into() });
+        let exec = Arc::new(StubExecutor {
+            response: "ok".into(),
+        });
         let action = Action::new(db.clone(), emb, exec);
-        let result = action.run(Intent {
-            query: "create linear issue".into(),
-            stack: None,
-        }).await.unwrap();
+        let result = action
+            .run(Intent {
+                query: "create linear issue".into(),
+                stack: None,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(result.kind, IntentKind::Remote);
     }

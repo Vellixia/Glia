@@ -159,7 +159,9 @@ pub async fn run_bridge(cfg: BridgeConfig) -> Result<(), BridgeError> {
 }
 
 /// Re-export for tests: open a raw stdin pipe that [`run_bridge`] can read.
-pub fn open_test_stdin(buf: &[u8]) -> io::Result<(tokio::io::DuplexStream, tokio::io::DuplexStream)> {
+pub fn open_test_stdin(
+    buf: &[u8],
+) -> io::Result<(tokio::io::DuplexStream, tokio::io::DuplexStream)> {
     let (a, b) = tokio::io::duplex(1024);
     let _ = buf;
     Ok((a, b))

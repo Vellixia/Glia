@@ -84,7 +84,11 @@ pub struct SkillMatch {
 pub trait Synthesizer: Send + Sync {
     /// Produce a synthesis for the given query, given the top-K matches.
     /// Implementations must respect MAX_TOKENS / MAX_CHARS.
-    async fn synthesize(&self, query: &str, matches: &[SkillMatch]) -> Result<Synthesis, SynthError>;
+    async fn synthesize(
+        &self,
+        query: &str,
+        matches: &[SkillMatch],
+    ) -> Result<Synthesis, SynthError>;
 
     /// Name of the model (for the `model` field on `Synthesis`).
     fn model_name(&self) -> &str;
@@ -97,15 +101,25 @@ pub trait Synthesizer: Send + Sync {
 /// `cosine * (1 + 0.1 * edges)`, capped at 1.0, then re-sorted desc.
 ///
 /// Matches not in the graph contribute 1.0× (no boost, no penalty).
-pub async fn reweight(matches: Vec<SkillMatch>, db: &GliaDb) -> Result<Vec<SkillMatch>, SynthError> {
+pub async fn reweight(
+    matches: Vec<SkillMatch>,
+    db: &GliaDb,
+) -> Result<Vec<SkillMatch>, SynthError> {
     let mut out = Vec::with_capacity(matches.len());
     for m in matches {
         let edges = count_applies_to_stack(db, &m.source).await?;
         let boost = 1.0 + 0.1 * edges as f32;
         let new_score = (m.score * boost).min(1.0);
-        out.push(SkillMatch { score: new_score, ..m });
+        out.push(SkillMatch {
+            score: new_score,
+            ..m
+        });
     }
-    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(out)
 }
 
@@ -113,7 +127,9 @@ pub async fn reweight(matches: Vec<SkillMatch>, db: &GliaDb) -> Result<Vec<Skill
 async fn count_applies_to_stack(db: &GliaDb, source: &str) -> Result<usize, SynthError> {
     // The source of a chunk is the chunk id (e.g. `a.md::0`), which is
     // the primary key of the `skill` record created by glia-chunk.
-    db.count_applies_to_stack_for(source).await.map_err(Into::into)
+    db.count_applies_to_stack_for(source)
+        .await
+        .map_err(Into::into)
 }
 
 /// Stub synthesizer. No LLM. Concatenates matches, hard-trims to
@@ -125,13 +141,19 @@ pub struct StubSynthesizer {
 
 impl Default for StubSynthesizer {
     fn default() -> Self {
-        Self { model: "stub".into() }
+        Self {
+            model: "stub".into(),
+        }
     }
 }
 
 #[async_trait]
 impl Synthesizer for StubSynthesizer {
-    async fn synthesize(&self, _query: &str, matches: &[SkillMatch]) -> Result<Synthesis, SynthError> {
+    async fn synthesize(
+        &self,
+        _query: &str,
+        matches: &[SkillMatch],
+    ) -> Result<Synthesis, SynthError> {
         let mut text = String::new();
         let mut citations = Vec::new();
         for m in matches {
@@ -142,7 +164,10 @@ impl Synthesizer for StubSynthesizer {
                 text.push_str("\n\n");
             }
             text.push_str(&m.content);
-            citations.push(Citation { source: m.source.clone(), score: m.score });
+            citations.push(Citation {
+                source: m.source.clone(),
+                score: m.score,
+            });
         }
         if text.len() > MAX_CHARS {
             text.truncate(MAX_CHARS);
@@ -150,7 +175,11 @@ impl Synthesizer for StubSynthesizer {
         if text.is_empty() {
             text.push_str("(no relevant skills)");
         }
-        Ok(Synthesis { text, citations, model: self.model.clone() })
+        Ok(Synthesis {
+            text,
+            citations,
+            model: self.model.clone(),
+        })
     }
 
     fn model_name(&self) -> &str {
@@ -172,7 +201,11 @@ pub struct HttpSynthesizer {
 
 impl HttpSynthesizer {
     /// Build a new HTTP synthesizer.
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             api_key: api_key.into(),
@@ -187,7 +220,11 @@ impl HttpSynthesizer {
 
 #[async_trait]
 impl Synthesizer for HttpSynthesizer {
-    async fn synthesize(&self, query: &str, matches: &[SkillMatch]) -> Result<Synthesis, SynthError> {
+    async fn synthesize(
+        &self,
+        query: &str,
+        matches: &[SkillMatch],
+    ) -> Result<Synthesis, SynthError> {
         let system = "You are Glia. Extract and cite from the provided context only. Do not add external knowledge. Keep the answer under 150 tokens. Cite sources with [source] markers.";
         let mut user = String::from("Question: ");
         user.push_str(query);
@@ -216,12 +253,15 @@ impl Synthesizer for HttpSynthesizer {
             .await
             .map_err(|e| SynthError::Http(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| SynthError::Http(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| SynthError::Http(e.to_string()))?;
         if !status.is_success() {
             return Err(SynthError::Http(format!("{}: {}", status, text)));
         }
-        let parsed: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| SynthError::Parse(e.to_string()))?;
+        let parsed: ChatResponse =
+            serde_json::from_str(&text).map_err(|e| SynthError::Parse(e.to_string()))?;
         let content = parsed
             .choices
             .into_iter()
@@ -231,10 +271,17 @@ impl Synthesizer for HttpSynthesizer {
 
         let citations: Vec<Citation> = matches
             .iter()
-            .map(|m| Citation { source: m.source.clone(), score: m.score })
+            .map(|m| Citation {
+                source: m.source.clone(),
+                score: m.score,
+            })
             .collect();
 
-        Ok(Synthesis { text: content, citations, model: self.model.clone() })
+        Ok(Synthesis {
+            text: content,
+            citations,
+            model: self.model.clone(),
+        })
     }
 
     fn model_name(&self) -> &str {
@@ -294,7 +341,11 @@ mod tests {
     }
 
     fn m(source: &str, content: &str, score: f32) -> SkillMatch {
-        SkillMatch { source: source.into(), content: content.into(), score }
+        SkillMatch {
+            source: source.into(),
+            content: content.into(),
+            score,
+        }
     }
 
     #[tokio::test]
@@ -334,19 +385,38 @@ mod tests {
         // a.md::0 should be boosted (0.5 * (1.0 + 0.1*3) = 0.65).
         // b.md::0 stays at 0.5.
         let now = "2026-01-01T00:00:00Z";
-        db.upsert_skill("a.md::0", Skill { content: "x".into(), source: "a.md".into(), embedding: vec![], updated_at: now.into() }).await.unwrap();
-        db.upsert_skill("b.md::0", Skill { content: "y".into(), source: "b.md".into(), embedding: vec![], updated_at: now.into() }).await.unwrap();
+        db.upsert_skill(
+            "a.md::0",
+            Skill {
+                content: "x".into(),
+                source: "a.md".into(),
+                embedding: vec![],
+                updated_at: now.into(),
+            },
+        )
+        .await
+        .unwrap();
+        db.upsert_skill(
+            "b.md::0",
+            Skill {
+                content: "y".into(),
+                source: "b.md".into(),
+                embedding: vec![],
+                updated_at: now.into(),
+            },
+        )
+        .await
+        .unwrap();
         for s in ["nextjs", "supabase", "vercel"] {
             db.upsert_stack(s, Stack { name: s.into() }).await.unwrap();
         }
         for s in ["nextjs", "supabase", "vercel"] {
-            db.relate_skill_applies_to_stack("a.md::0", s).await.unwrap();
+            db.relate_skill_applies_to_stack("a.md::0", s)
+                .await
+                .unwrap();
         }
 
-        let matches = vec![
-            m("a.md::0", "x", 0.5),
-            m("b.md::0", "y", 0.5),
-        ];
+        let matches = vec![m("a.md::0", "x", 0.5), m("b.md::0", "y", 0.5)];
         let out = reweight(matches, &db).await.unwrap();
         assert_eq!(out.len(), 2);
         // a.md::0 boosted, comes first.
@@ -383,7 +453,10 @@ mod tests {
     fn synthesis_serializes_round_trip() {
         let s = Synthesis {
             text: "x".into(),
-            citations: vec![Citation { source: "a.md".into(), score: 0.5 }],
+            citations: vec![Citation {
+                source: "a.md".into(),
+                score: 0.5,
+            }],
             model: "stub".into(),
         };
         let j = serde_json::to_string(&s).unwrap();
