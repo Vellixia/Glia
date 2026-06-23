@@ -1,5 +1,7 @@
 # Glia — docker-compose for Hub + SurrealDB server + OpenBao + Redis.
-# T18: V16, C7. SurrealDB uses persistent volume (⊥ in-memory default).
+# T18: V16, C7. SurrealDB uses `memory` storage (rocksdb on Windows docker
+# named volume triggers "There was a problem with the database"; switch to
+# `rocksdb:/data/surreal.db` + named `surrealdb_data` volume in linux prod).
 
 services:
   surrealdb:

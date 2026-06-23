@@ -1,0 +1,31 @@
+# release-plz config — Glia
+# Tag-driven, cross-platform, ⊥ crates.io publish for v0.1.0.
+# https://release-plz.ieni.dev/docs/
+
+[workspace]
+# workspace root is the only package for v0.1.0
+dependencies_update = true
+# Update workspace members automatically when a new crate version lands
+changelog_update = true
+# Conventional commits control the version bump
+git_tag_enable = true
+semver_check = true
+
+# Release flow
+publish = false
+# (v0.1.0: ⊥ crates.io; uncomment after the first tag is verified)
+# publish_allow_dirty = false
+# publish_no_verify = false
+
+[changelog]
+header = """# Changelog\n\nAll notable changes to Glia are documented here.\n"""
+protect_breaking_commits = true
+sort_commits = "oldest"
+
+# Per-target dist config
+[dist]
+# The actual cargo-dist invocation lives in `.github/workflows/release.yml`
+# (added in a follow-up). release-plz only manages version + tag here.
+cargo-dist = true
+allow_dirty = false
+tag_name = "v{{version}}"
