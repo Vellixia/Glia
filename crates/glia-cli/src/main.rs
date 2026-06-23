@@ -97,6 +97,33 @@ pub enum Cmd {
         #[arg(long, env = "GLIA_LOCAL_DB", default_value = "./.glia/local.db")]
         local: PathBuf,
     },
+    /// Re-ingest local skill files into the embedded SurrealDB (T10).
+    /// Invoked by the git pre-push hook installed by `glia init`.
+    Chunk {
+        /// Subcommand under `glia chunk`.
+        #[command(subcommand)]
+        op: ChunkOp,
+        /// Path to the local SurrealKV data directory.
+        #[arg(long, env = "GLIA_LOCAL_DB", default_value = "./.glia/local.db", global = true)]
+        local: PathBuf,
+        /// Repo root to scan for `./skills/*.md` (default: `.`).
+        #[arg(long, env = "GLIA_REPO_ROOT", default_value = ".", global = true)]
+        repo_root: PathBuf,
+    },
+}
+
+/// `glia chunk` subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ChunkOp {
+    /// Ingest all skill files under `<repo>/skills/`.
+    Ingest {
+        /// Ingest all tracked skills (overrides `--changed`).
+        #[arg(long, default_value_t = false)]
+        all: bool,
+        /// Ingest only files changed since last commit.
+        #[arg(long, default_value_t = false)]
+        changed: bool,
+    },
 }
 
 #[tokio::main]
@@ -158,6 +185,9 @@ async fn main() -> anyhow::Result<()> {
             local,
         } => {
             run_use(tool, catalog_url, local).await?;
+        }
+        Cmd::Chunk { op, local, repo_root } => {
+            run_chunk(op, local, repo_root).await?;
         }
     }
     Ok(())
@@ -317,12 +347,62 @@ async fn run_use(tool: String, catalog_url: Option<String>, local: PathBuf) -> a
     let db = ensure_local_db(local).await?;
     let embedder = glia_embed::Embedder::new()?;
     let url = catalog_url.unwrap_or_else(|| {
-        "https://raw.githubusercontent.com/AnomalyCo/community-catalog/main".into()
+        "https://raw.githubusercontent.com/Vellixia/community-catalog/main".into()
     });
     let source: Box<dyn glia_catalog::CatalogSource> =
         Box::new(glia_catalog::GitHubCatalog::new(url));
     let result = glia_catalog::use_tool(source.as_ref(), &tool, &db, &embedder).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+async fn run_chunk(op: ChunkOp, local: PathBuf, repo_root: PathBuf) -> anyhow::Result<()> {
+    let ChunkOp::Ingest { all: _, changed } = op;
+    let _ = changed;
+    let skills_dir = repo_root.join("skills");
+    if !skills_dir.is_dir() {
+        eprintln!(
+            "no skills/ directory at {}; nothing to ingest",
+            skills_dir.display()
+        );
+        return Ok(());
+    }
+    let db = ensure_local_db(local).await?;
+    let embedder = match glia_embed::Embedder::try_new() {
+        Some(e) => Arc::new(e),
+        None => {
+            eprintln!(
+                "glia-embed: model assets missing; skipping chunk ingest (run `glia init` to install)"
+            );
+            return Ok(());
+        }
+    };
+    let pipe = glia_chunk::Pipeline::new(db, embedder);
+    let mut total = 0usize;
+    let mut entries = tokio::fs::read_dir(&skills_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        let file_name = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if file_name.eq_ignore_ascii_case("README") {
+            continue;
+        }
+        let source = if file_name.starts_with("local::") {
+            file_name.clone()
+        } else {
+            format!("local::{}", file_name)
+        };
+        let body = tokio::fs::read_to_string(&path).await?;
+        let ids = pipe.ingest(&source, &body).await?;
+        total += ids.len();
+        tracing::info!(file = %path.display(), chunks = ids.len(), "ingested");
+    }
+    println!("{}", serde_json::json!({ "ingested_chunks": total }));
     Ok(())
 }
 

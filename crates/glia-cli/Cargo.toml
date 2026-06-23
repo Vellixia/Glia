@@ -20,6 +20,7 @@ glia-author = { path = "../glia-author" }
 glia-catalog = { path = "../glia-catalog" }
 glia-embed = { path = "../glia-embed" }
 glia-auth = { path = "../glia-auth" }
+glia-chunk = { path = "../glia-chunk" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tracing = "0.1"

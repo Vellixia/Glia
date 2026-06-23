@@ -2104,6 +2104,7 @@ dependencies = [
  "glia-author",
  "glia-bridge",
  "glia-catalog",
+ "glia-chunk",
  "glia-db",
  "glia-embed",
  "glia-init",
