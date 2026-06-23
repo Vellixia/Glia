@@ -36,7 +36,7 @@ jobs:
             binary: glia
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            archive: zip
+            archive: tar.xz
             binary: glia.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -44,13 +44,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.89
         with:
-          components: rustfmt
+          components: rustfmt, clippy
           targets: ${{ matrix.target }}
+      - name: Install cross toolchain (aarch64-linux-gnu)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Cache cargo registry & build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
       - name: Build release binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }} -p glia-cli
       - name: Package artifact
         shell: bash
