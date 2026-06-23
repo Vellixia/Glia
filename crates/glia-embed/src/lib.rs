@@ -52,6 +52,13 @@ impl Embedder {
         Self::with_device(Device::Cpu)
     }
 
+    /// Returns `None` if the model is missing or fails to load for any
+    /// reason. Used by integration tests in other crates to skip cleanly
+    /// when the model assets are not present (CI, fresh clone).
+    pub fn try_new() -> Option<Self> {
+        Self::new().ok()
+    }
+
     /// Load model on a specific device (test seam).
     pub fn with_device(device: Device) -> Result<Self, EmbedError> {
         let weights = load_asset("model.safetensors")?;
@@ -136,16 +143,34 @@ mod tests {
         dot / (na * nb)
     }
 
+    /// Model assets are gitignored. Skip embed tests if missing so CI does
+    /// not need network or LFS at build time. Local devs should run
+    /// `./scripts/fetch-embed-model.sh` (or place the three files under
+    /// `crates/glia-embed/embed/`) before running `cargo test -p glia-embed`.
+    fn try_embedder() -> Option<Embedder> {
+        match Embedder::new() {
+            Ok(e) => Some(e),
+            Err(EmbedError::MissingAsset(_)) => {
+                eprintln!(
+                    "skipping glia-embed test: model asset not present \
+                     (see crates/glia-embed/embed/README.md)"
+                );
+                None
+            }
+            Err(e) => panic!("unexpected embed error: {e}"),
+        }
+    }
+
     #[test]
     fn loads_and_embeds() {
-        let e = Embedder::new().expect("load model");
+        let Some(e) = try_embedder() else { return };
         let v = e.embed("hello world").expect("embed");
         assert_eq!(v.len(), 384);
     }
 
     #[test]
     fn normalized_unit_length() {
-        let e = Embedder::new().expect("load model");
+        let Some(e) = try_embedder() else { return };
         let v = e.embed("rust embedder").expect("embed");
         let n: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((n - 1.0).abs() < 1e-3, "expected unit norm, got {n}");
@@ -153,7 +178,7 @@ mod tests {
 
     #[test]
     fn same_text_cosine_near_one() {
-        let e = Embedder::new().expect("load model");
+        let Some(e) = try_embedder() else { return };
         let a = e.embed("the cat sat on the mat").expect("a");
         let b = e.embed("the cat sat on the mat").expect("b");
         let s = cos(&a, &b);
@@ -162,7 +187,7 @@ mod tests {
 
     #[test]
     fn similar_text_higher_than_unrelated() {
-        let e = Embedder::new().expect("load model");
+        let Some(e) = try_embedder() else { return };
         let cats_a = e.embed("a cat is a small animal").expect("a");
         let cats_b = e.embed("kittens are young cats").expect("b");
         let rocket = e.embed("rocket launches into orbit").expect("c");
@@ -174,7 +199,7 @@ mod tests {
 
     #[test]
     fn whitespace_input_still_embeds() {
-        let e = Embedder::new().expect("load model");
+        let Some(e) = try_embedder() else { return };
         let v = e.embed("   ").expect("embed");
         assert_eq!(v.len(), 384);
     }

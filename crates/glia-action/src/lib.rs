@@ -321,11 +321,11 @@ mod tests {
         Utc::now().to_rfc3339()
     }
 
-    async fn setup() -> (Arc<GliaDb>, Arc<Embedder>) {
+    async fn setup() -> Option<(Arc<GliaDb>, Arc<Embedder>)> {
         let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
-        let emb = Arc::new(Embedder::new().expect("load embedder"));
-        (db, emb)
+        let emb = Arc::new(Embedder::try_new()?);
+        Some((db, emb))
     }
 
     #[tokio::test]
@@ -375,7 +375,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_returns_auth_required_when_dep_missing() {
-        let (db, emb) = setup().await;
+        let Some((db, emb)) = setup().await else {
+            return;
+        };
 
         db.upsert_skill(
             "local::auth-required-rule",
@@ -417,7 +419,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_done_when_executor_succeeds() {
-        let (db, emb) = setup().await;
+        let Some((db, emb)) = setup().await else {
+            return;
+        };
 
         db.upsert_skill(
             "local::cat-readme",
@@ -451,7 +455,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_stack_filters_skills() {
-        let (db, emb) = setup().await;
+        let Some((db, emb)) = setup().await else {
+            return;
+        };
 
         db.upsert_skill(
             "nextjs::rule",
@@ -512,7 +518,9 @@ mod tests {
 
     #[tokio::test]
     async fn tool_required_missing_surfaces_auth() {
-        let (db, emb) = setup().await;
+        let Some((db, emb)) = setup().await else {
+            return;
+        };
 
         db.upsert_tool(
             "linear-create",

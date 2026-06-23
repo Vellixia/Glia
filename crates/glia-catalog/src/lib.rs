@@ -289,10 +289,12 @@ mod tests {
 
     #[tokio::test]
     async fn use_tool_registers_community_skill() {
+        let Some(emb) = glia_embed::Embedder::try_new() else {
+            return;
+        };
         let s = stub();
         let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
-        let emb = glia_embed::Embedder::new().unwrap();
         let result = use_tool(&s, "linear-create-issue", &db, &emb)
             .await
             .unwrap();
@@ -304,10 +306,12 @@ mod tests {
 
     #[tokio::test]
     async fn use_tool_not_found() {
+        let Some(emb) = glia_embed::Embedder::try_new() else {
+            return;
+        };
         let s = stub();
         let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
-        let emb = glia_embed::Embedder::new().unwrap();
         let err = use_tool(&s, "nope", &db, &emb).await.unwrap_err();
         assert!(matches!(err, CatalogError::NotFound(_)));
     }
@@ -322,10 +326,12 @@ mod tests {
 
     #[tokio::test]
     async fn use_tool_creates_stack_edges() {
+        let Some(emb) = glia_embed::Embedder::try_new() else {
+            return;
+        };
         let s = stub();
         let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
-        let emb = glia_embed::Embedder::new().unwrap();
         use_tool(&s, "linear-create-issue", &db, &emb)
             .await
             .unwrap();

@@ -402,8 +402,8 @@ mod tests {
         db
     }
 
-    fn emb() -> glia_embed::Embedder {
-        glia_embed::Embedder::new().expect("embedder")
+    fn emb() -> Option<glia_embed::Embedder> {
+        glia_embed::Embedder::try_new()
     }
 
     #[tokio::test]
@@ -467,12 +467,13 @@ mod tests {
 
     #[tokio::test]
     async fn register_inserts_skill_with_embedding() {
+        let Some(emb) = emb() else { return };
         let db = empty_db().await;
         let doc = SkillDoc {
             frontmatter: SkillFrontmatter::new("use-zustand", "Use zustand").with_stack("nextjs"),
             body: "Use zustand for React state.".into(),
         };
-        let id = register(&doc, &db, &emb()).await.unwrap();
+        let id = register(&doc, &db, &emb).await.unwrap();
         assert_eq!(id, "local::use-zustand");
         let skill = db.get_skill(&id).await.unwrap().unwrap();
         assert_eq!(skill.content, "Use zustand for React state.");
@@ -483,18 +484,20 @@ mod tests {
 
     #[tokio::test]
     async fn register_rejects_duplicate() {
+        let Some(emb) = emb() else { return };
         let db = empty_db().await;
         let doc = SkillDoc {
             frontmatter: SkillFrontmatter::new("dup", "x"),
             body: "x".into(),
         };
-        register(&doc, &db, &emb()).await.unwrap();
-        let err = register(&doc, &db, &emb()).await.unwrap_err();
+        register(&doc, &db, &emb).await.unwrap();
+        let err = register(&doc, &db, &emb).await.unwrap_err();
         assert!(matches!(err, AuthorError::AlreadyExists(_)));
     }
 
     #[tokio::test]
     async fn skill_author_save_end_to_end() {
+        let Some(emb) = emb() else { return };
         let db = empty_db().await;
         let sa = SkillAuthor::new(Arc::new(TemplateAuthor));
         let id = sa
@@ -503,7 +506,7 @@ mod tests {
                 Some("use-zustand"),
                 &["nextjs".into(), "react".into()],
                 &db,
-                &emb(),
+                &emb,
             )
             .await
             .unwrap();

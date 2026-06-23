@@ -33,6 +33,9 @@ jobs:
       - name: cargo clippy (workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test (workspace)
-        run: cargo test --workspace --all-targets --no-fail-fast
+        # --test-threads=1 avoids a Windows-only race in
+        # glia-init::tests::count_files_skips_node_modules where parallel
+        # tests can briefly see a sibling test's tmp dir contents.
+        run: cargo test --workspace --all-targets --no-fail-fast -- --test-threads=1
       - name: cargo build (release glia-cli)
         run: cargo build --release -p glia-cli

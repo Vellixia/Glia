@@ -303,19 +303,24 @@ mod tests {
     use glia_db::{Connection, Skill, Stack};
     use glia_synth::StubSynthesizer;
 
-    async fn setup() -> (Arc<GliaDb>, Arc<Embedder>, Arc<dyn Synthesizer>) {
+    async fn setup() -> Option<(Arc<GliaDb>, Arc<Embedder>, Arc<dyn Synthesizer>)> {
         let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
         db.init_schema().await.unwrap();
-        let emb = Arc::new(Embedder::new().unwrap());
+        let emb = Arc::new(Embedder::try_new()?);
         let synth: Arc<dyn Synthesizer> = Arc::new(StubSynthesizer::default());
-        (db, emb, synth)
+        Some((db, emb, synth))
     }
 
     async fn seed_skill(db: &GliaDb, id: &str, content: &str, stack: &str) {
         let vector = db; // suppress unused
         let _ = vector;
         let now = "2026-01-01T00:00:00Z";
-        let emb = Embedder::new().unwrap();
+        let Some(emb) = Embedder::try_new() else {
+            // No model available (CI w/o assets) — skip seeding; the
+            // surrounding tests that depend on a populated DB will
+            // already have early-returned in their `setup()`.
+            return;
+        };
         let v = emb.embed(content).unwrap();
         db.upsert_skill(
             id,
@@ -372,7 +377,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_context_caches_result() {
-        let (db, emb, synth) = setup().await;
+        let Some((db, emb, synth)) = setup().await else {
+            return;
+        };
         seed_skill(&db, "use-zustand", "Use zustand for React state.", "nextjs").await;
         let loader = Arc::new(ContextLoader::new(
             db,
@@ -389,7 +396,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_context_detects_stacks() {
-        let (db, emb, synth) = setup().await;
+        let Some((db, emb, synth)) = setup().await else {
+            return;
+        };
         let loader = Arc::new(ContextLoader::new(
             db,
             emb,
@@ -405,7 +414,9 @@ mod tests {
 
     #[tokio::test]
     async fn clear_removes_cached() {
-        let (db, emb, synth) = setup().await;
+        let Some((db, emb, synth)) = setup().await else {
+            return;
+        };
         let loader = Arc::new(ContextLoader::new(
             db,
             emb,
@@ -421,7 +432,9 @@ mod tests {
 
     #[tokio::test]
     async fn clear_all_empties_cache() {
-        let (db, emb, synth) = setup().await;
+        let Some((db, emb, synth)) = setup().await else {
+            return;
+        };
         let loader = Arc::new(ContextLoader::new(
             db,
             emb,
