@@ -1,0 +1,23 @@
+[package]
+name = "glia-hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Hook generation engine: .cursor/rules + Claude PreToolUse (T16, V7/V10)"
+
+[dependencies]
+glia-db = { path = "../glia-db" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "fs", "macros", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util", "fs"] }
+
+[lints]
+workspace = true

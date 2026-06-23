@@ -1,0 +1,22 @@
+[package]
+name = "glia-synth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LLM synthesis for Glia — OpenAI-compatible endpoint, ≤150 tokens, graph edge weight priority"
+
+[dependencies]
+glia-db = { path = "../glia-db" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

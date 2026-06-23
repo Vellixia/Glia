@@ -1,0 +1,26 @@
+[package]
+name = "glia-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Proactive context loading: file-open → background glia_action (T17, V10)"
+
+[dependencies]
+glia-db = { path = "../glia-db" }
+glia-embed = { path = "../glia-embed" }
+glia-action = { path = "../glia-action" }
+glia-synth = { path = "../glia-synth" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+tracing = "0.1"
+notify = "7"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util", "time"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+# Glia Hub Dockerfile — multi-stage linux build.
+# Builds glia-hub ELF binary in builder, ships slim runtime image.
+
+FROM rust:1-bookworm AS builder
+WORKDIR /build
+
+# Cache deps first.
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+RUN mkdir -p target && cargo build --release -p glia-hub --bin glia-hub
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/glia-hub /usr/local/bin/glia-hub
+EXPOSE 3000
+CMD ["glia-hub"]

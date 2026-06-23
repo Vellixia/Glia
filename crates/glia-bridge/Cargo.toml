@@ -1,0 +1,22 @@
+[package]
+name = "glia-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "stdio <-> WebSocket translator for Glia CLI bridge command"
+
+[dependencies]
+tokio = { version = "1", features = ["io-std", "io-util", "net", "rt", "macros", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["connect"] }
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+
+[dev-dependencies]
+tokio-tungstenite = { version = "0.26", features = ["connect", "handshake"] }
+tokio = { version = "1", features = ["io-std", "io-util", "net", "rt", "rt-multi-thread", "macros", "sync", "time"] }
+
+[lints]
+workspace = true

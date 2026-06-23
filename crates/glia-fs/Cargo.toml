@@ -1,0 +1,19 @@
+[package]
+name = "glia-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native Rust filesystem module for Glia CLI local-intent routing"
+
+[dependencies]
+thiserror = "2"
+tracing = "0.1"
+tokio = { version = "1", features = ["fs", "io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["fs", "io-util", "rt", "macros", "rt-multi-thread"] }
+tempfile = "3"
+
+[lints]
+workspace = true

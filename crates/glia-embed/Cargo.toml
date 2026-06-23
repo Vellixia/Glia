@@ -1,0 +1,23 @@
+[package]
+name = "glia-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Local sentence embeddings for Glia — candle + rust-embed, air-gapped MiniLM-L6-v2"
+
+[dependencies]
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = "0.21"
+rust-embed = "8"
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

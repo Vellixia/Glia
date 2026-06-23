@@ -1,0 +1,25 @@
+[package]
+name = "glia-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AUTH_REQUIRED WS blocking + localhost OAuth callback (T15, V3/V14)"
+
+[dependencies]
+glia-db = { path = "../glia-db" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+thiserror = "2"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "macros", "net"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "test-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[lints]
+workspace = true

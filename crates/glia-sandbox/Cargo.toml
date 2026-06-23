@@ -1,0 +1,25 @@
+[package]
+name = "glia-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Execution sandbox with OpenBao response-wrapping token injection"
+
+[features]
+mock = []
+
+[dependencies]
+thiserror = "2"
+tracing = "0.1"
+tokio = { version = "1", features = ["process", "io-util", "rt", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+glia-sandbox = { path = ".", features = ["mock"] }
+tokio = { version = "1", features = ["process", "io-util", "rt", "macros", "rt-multi-thread", "sync"] }
+tempfile = "3"
+
+[lints]
+workspace = true

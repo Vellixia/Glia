@@ -1,0 +1,25 @@
+[package]
+name = "glia-action"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Unified glia_action endpoint — discover+exec+dep-check, intent classification, parallel orchestration"
+
+[dependencies]
+glia-db = { path = "../glia-db" }
+glia-embed = { path = "../glia-embed" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+tempfile = "3"
+
+[lints]
+workspace = true

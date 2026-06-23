@@ -1,0 +1,25 @@
+[package]
+name = "glia-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "`glia use <community-tool>` catalog pull + private sandbox exec (T20, V12/C9)"
+
+[dependencies]
+glia-db = { path = "../glia-db" }
+glia-embed = { path = "../glia-embed" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "fs", "macros", "sync"] }
+tracing = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "test-util", "fs"] }
+
+[lints]
+workspace = true

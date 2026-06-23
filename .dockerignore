@@ -1,0 +1,5 @@
+target/
+.git/
+.glia/
+*.log
+*.tmp

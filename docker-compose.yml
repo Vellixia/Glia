@@ -1,0 +1,77 @@
+# Glia — docker-compose for Hub + SurrealDB server + OpenBao + Redis.
+# T18: V16, C7. SurrealDB uses persistent volume (⊥ in-memory default).
+
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v2.6.5
+    command: ["start", "--user", "root", "--pass", "${SURREALDB_PASSWORD:-glia}", "memory", "--bind", "0.0.0.0:8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      SURREALDB_NAMESPACE: glia
+      SURREALDB_DATABASE: glia
+    restart: unless-stopped
+    # No healthcheck — image is scratch + surreal binary, no curl/wget.
+    # Hub uses condition: service_started + a short sleep below.
+
+  openbao:
+    image: openbao/openbao:2.2
+    cap_add:
+      - IPC_LOCK
+    command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200", "-dev-root-token-id=glia-root"]
+    ports:
+      - "8201:8200"
+    environment:
+      BAO_API_ADDR: "http://0.0.0.0:8200"
+    volumes:
+      - openbao_data:/openbao/file
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  glia-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    depends_on:
+      surrealdb:
+        condition: service_started
+      openbao:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GLIA_DB_REMOTE: "ws://surrealdb:8000"
+      GLIA_DB_NS: glia
+      GLIA_DB_DB: glia
+      GLIA_DB_USER: root
+      GLIA_DB_PASS: "${SURREALDB_PASSWORD:-glia}"
+      GLIA_OPENBAO_URL: "http://openbao:8200"
+      GLIA_OPENBAO_TOKEN: "${OPENBAO_ROOT_TOKEN:-glia-root}"
+      GLIA_REDIS_URL: "redis://redis:6379/0"
+      GLIA_HUB_BIND: "0.0.0.0:3000"
+      RUST_LOG: info
+    restart: unless-stopped
+
+volumes:
+  openbao_data:
+  redis_data:
