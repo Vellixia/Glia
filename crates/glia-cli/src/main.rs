@@ -164,10 +164,10 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn ensure_local_db(local: PathBuf) -> anyhow::Result<Arc<glia_db::GliaDb>> {
-    if let Some(parent) = local.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await.ok();
-        }
+    if let Some(parent) = local.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent).await.ok();
     }
     let db = Arc::new(glia_db::GliaDb::connect(glia_db::Connection::Embedded(local)).await?);
     db.init_schema().await?;

@@ -162,11 +162,11 @@ impl SyncEngine {
         let diffs = self.status().await?;
         let mut count = 0;
         for d in diffs {
-            if d.status == SkillSyncStatus::RemoteNewer || d.status == SkillSyncStatus::RemoteOnly {
-                if let Some(remote_skill) = self.remote.get_skill(&d.id).await? {
-                    self.local.upsert_skill(&d.id, remote_skill).await?;
-                    count += 1;
-                }
+            if (d.status == SkillSyncStatus::RemoteNewer || d.status == SkillSyncStatus::RemoteOnly)
+                && let Some(remote_skill) = self.remote.get_skill(&d.id).await?
+            {
+                self.local.upsert_skill(&d.id, remote_skill).await?;
+                count += 1;
             }
         }
         Ok(count)
@@ -178,11 +178,11 @@ impl SyncEngine {
         let diffs = self.status().await?;
         let mut count = 0;
         for d in diffs {
-            if d.status == SkillSyncStatus::LocalNewer || d.status == SkillSyncStatus::LocalOnly {
-                if let Some(local_skill) = self.local.get_skill(&d.id).await? {
-                    self.remote.upsert_skill(&d.id, local_skill).await?;
-                    count += 1;
-                }
+            if (d.status == SkillSyncStatus::LocalNewer || d.status == SkillSyncStatus::LocalOnly)
+                && let Some(local_skill) = self.local.get_skill(&d.id).await?
+            {
+                self.remote.upsert_skill(&d.id, local_skill).await?;
+                count += 1;
             }
         }
         Ok(count)

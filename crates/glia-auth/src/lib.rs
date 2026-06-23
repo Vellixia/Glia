@@ -139,11 +139,10 @@ impl AuthWaiter {
 
 impl Drop for AuthWaiter {
     fn drop(&mut self) {
-        // Best-effort abort if async shutdown wasn't called.
-        if let Ok(mut guard) = self.server_handle.try_lock() {
-            if let Some(handle) = guard.take() {
-                handle.abort();
-            }
+        if let Ok(mut guard) = self.server_handle.try_lock()
+            && let Some(handle) = guard.take()
+        {
+            handle.abort();
         }
     }
 }

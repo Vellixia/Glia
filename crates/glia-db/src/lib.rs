@@ -269,12 +269,11 @@ impl GliaDb {
         }
         let mut tools = Vec::new();
         for edge in edges {
-            if edge.subject.table() == "tool" {
-                if let Ok(id) = String::try_from(edge.subject.key().clone()) {
-                    if let Some(tool) = self.db.select(("tool", id.as_str())).await? {
-                        tools.push(tool);
-                    }
-                }
+            if edge.subject.table() == "tool"
+                && let Ok(id) = String::try_from(edge.subject.key().clone())
+                && let Some(tool) = self.db.select(("tool", id.as_str())).await?
+            {
+                tools.push(tool);
             }
         }
         Ok(tools)
@@ -296,12 +295,11 @@ impl GliaDb {
         }
         let mut skills = Vec::new();
         for edge in edges {
-            if edge.subject.table() == "skill" {
-                if let Ok(id) = String::try_from(edge.subject.key().clone()) {
-                    if let Some(skill) = self.db.select(("skill", id.as_str())).await? {
-                        skills.push(skill);
-                    }
-                }
+            if edge.subject.table() == "skill"
+                && let Ok(id) = String::try_from(edge.subject.key().clone())
+                && let Some(skill) = self.db.select(("skill", id.as_str())).await?
+            {
+                skills.push(skill);
             }
         }
         Ok(skills)
