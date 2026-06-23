@@ -7,7 +7,7 @@
 
 [![CI](https://github.com/Vellixia/Glia/actions/workflows/ci.yml/badge.svg)](https://github.com/Vellixia/Glia/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates](https://img.shields.io/badge/workspace-20%20crates-blueviolet.svg)](Cargo.toml)
 [![Tests](https://img.shields.io/badge/tests-167%20%E2%9C%93-brightgreen.svg)](#development)
 [![Air-gap](https://img.shields.io/badge/air--gap-ready-success.svg)](#design)

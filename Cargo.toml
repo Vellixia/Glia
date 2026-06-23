@@ -6,7 +6,7 @@ members = ["crates/glia-cli", "crates/glia-bridge", "crates/glia-fs", "crates/gl
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
