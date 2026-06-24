@@ -518,4 +518,59 @@ mod tests {
         let skill = db.get_skill(&id).await.unwrap().unwrap();
         assert!(skill.content.contains("zustand"));
     }
+
+    #[test]
+    fn slugify_idempotent_on_valid_slug() {
+        assert_eq!(slugify("use-zustand"), "use-zustand");
+    }
+
+    #[test]
+    fn slugify_slashes_and_dots() {
+        assert_eq!(slugify("a/b"), "a-b");
+        assert_eq!(slugify("v1.2"), "v1-2");
+    }
+
+    #[tokio::test]
+    async fn template_author_empty_description_slug_untitled() {
+        let a = TemplateAuthor;
+        let doc = a.author("", None, &[]).await.unwrap();
+        assert_eq!(doc.frontmatter.name, "untitled");
+    }
+
+    #[tokio::test]
+    async fn template_author_whitespace_description() {
+        let a = TemplateAuthor;
+        let doc = a.author("   ", None, &[]).await.unwrap();
+        assert_eq!(doc.frontmatter.name, "untitled");
+    }
+
+    #[test]
+    fn author_error_display() {
+        let e = AuthorError::AlreadyExists("x".into());
+        assert!(format!("{}", e).contains("already exists"));
+        let e = AuthorError::Http("x".into());
+        assert!(format!("{}", e).contains("http"));
+        let e = AuthorError::Parse("x".into());
+        assert!(format!("{}", e).contains("parse"));
+    }
+
+    #[test]
+    fn titlecase_empty_string() {
+        assert_eq!(titlecase(""), "");
+    }
+
+    #[test]
+    fn titlecase_single_word() {
+        assert_eq!(titlecase("hello"), "Hello");
+    }
+
+    #[test]
+    fn skill_frontmatter_new_and_with_stack() {
+        let fm = SkillFrontmatter::new("test", "desc");
+        assert_eq!(fm.name, "test");
+        assert_eq!(fm.description, "desc");
+        assert!(fm.stacks.is_empty());
+        let fm2 = fm.with_stack("nextjs");
+        assert_eq!(fm2.stacks, vec!["nextjs"]);
+    }
 }

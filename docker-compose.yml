@@ -59,7 +59,7 @@ services:
       dockerfile: Dockerfile.hub
     depends_on:
       helixdb:
-        condition: service_healthy
+        condition: service_started
       openbao:
         condition: service_healthy
       redis:

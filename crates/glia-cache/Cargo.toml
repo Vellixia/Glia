@@ -19,6 +19,7 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "test-util"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [lints]
 workspace = true

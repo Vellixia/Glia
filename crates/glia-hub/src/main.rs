@@ -15,8 +15,17 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0.0.0.0:3000".into())
         .parse()?;
     tracing::info!(%bind, "glia-hub starting");
-    glia_hub::serve(bind)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    // Run the server with graceful shutdown on SIGINT/SIGTERM.
+    let server = glia_hub::serve(bind);
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::select! {
+        result = server => {
+            result.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        }
+        _ = shutdown => {
+            tracing::info!("received SIGINT, shutting down gracefully");
+        }
+    }
     Ok(())
 }

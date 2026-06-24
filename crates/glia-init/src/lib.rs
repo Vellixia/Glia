@@ -458,4 +458,108 @@ mod tests {
         assert!(!written.iter().any(|p| p.contains("pre-push")));
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
+
+    #[tokio::test]
+    async fn count_files_skips_target_dir() {
+        let dir = tmp();
+        write(&dir.join("real.txt"), "x").await;
+        tokio::fs::create_dir_all(dir.join("target")).await.unwrap();
+        write(&dir.join("target/compiled.txt"), "y").await;
+        let count = count_files(&dir, 100).await.unwrap();
+        assert_eq!(count, 1, "target/ should be skipped");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_skips_pycache() {
+        let dir = tmp();
+        write(&dir.join("main.py"), "x").await;
+        tokio::fs::create_dir_all(dir.join("__pycache__")).await.unwrap();
+        write(&dir.join("__pycache__/main.pyc"), "y").await;
+        let count = count_files(&dir, 100).await.unwrap();
+        assert_eq!(count, 1, "__pycache__ should be skipped");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_skips_hidden_files() {
+        let dir = tmp();
+        write(&dir.join("visible.txt"), "x").await;
+        write(&dir.join(".env"), "SECRET=x").await;
+        write(&dir.join(".gitignore"), "*.log\n").await;
+        let count = count_files(&dir, 100).await.unwrap();
+        assert_eq!(count, 1, "hidden files should be skipped");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_caps_at_limit() {
+        let dir = tmp();
+        for i in 0..50 {
+            write(&dir.join(format!("file{i}.txt")), "x").await;
+        }
+        let count = count_files(&dir, 10).await.unwrap();
+        assert!(count <= 11, "should cap near limit, got {count}");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_malformed_package_json_returns_serde_error() {
+        let dir = tmp();
+        write(&dir.join("package.json"), "{not valid json}").await;
+        let result = scan_repo(&dir).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), InitError::Serde(_)));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_package_json_no_dependencies_falls_to_node() {
+        let dir = tmp();
+        write(&dir.join("package.json"), r#"{"name":"x","version":"1"}"#).await;
+        let stacks = scan_repo(&dir).await.unwrap();
+        // No dependencies/devDependencies → should not detect nextjs/react.
+        // But `node` may be detected as a fallback.
+        let _ = stacks;
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_stripe_dependency_detected() {
+        let dir = tmp();
+        write(
+            &dir.join("package.json"),
+            r#"{"dependencies":{"stripe":"14"}}"#,
+        )
+        .await;
+        let stacks = scan_repo(&dir).await.unwrap();
+        assert!(stacks.iter().any(|s| s.id == "stripe"));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_with_only_git_dir_returns_empty_stacks() {
+        let dir = tmp();
+        tokio::fs::create_dir_all(dir.join(".git/hooks")).await.unwrap();
+        let stacks = scan_repo(&dir).await.unwrap();
+        assert!(stacks.is_empty());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[test]
+    fn pending_auth_for_stripe() {
+        let stacks = vec![DetectedStack {
+            id: "stripe".into(),
+            name: "Stripe".into(),
+            evidence: "package.json".into(),
+        }];
+        let creds = pending_auth_for_stacks(&stacks);
+        assert!(creds.contains(&"stripe".to_string()));
+    }
+
+    #[test]
+    fn pending_auth_for_empty_stacks() {
+        let creds = pending_auth_for_stacks(&[]);
+        assert!(creds.is_empty());
+    }
 }

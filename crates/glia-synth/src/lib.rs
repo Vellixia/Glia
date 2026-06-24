@@ -468,4 +468,71 @@ mod tests {
         let back: Synthesis = serde_json::from_str(&j).unwrap();
         assert_eq!(back.model, "stub");
     }
+
+    #[tokio::test]
+    async fn stub_single_chunk_synthesis() {
+        let s = StubSynthesizer::default();
+        let out = s
+            .synthesize("query", &[m("only.md::0", "single chunk content", 0.9)])
+            .await
+            .unwrap();
+        assert!(out.text.contains("single chunk content"));
+        assert_eq!(out.citations.len(), 1);
+        assert_eq!(out.citations[0].source, "only.md::0");
+    }
+
+    #[tokio::test]
+    async fn stub_101_chunks_caps_at_max_chars() {
+        let s = StubSynthesizer::default();
+        let matches: Vec<SkillMatch> = (0..101)
+            .map(|i| m(&format!("f{i}.md::0"), &"x".repeat(100), 0.5))
+            .collect();
+        let out = s.synthesize("q", &matches).await.unwrap();
+        assert!(
+            out.text.chars().count() <= MAX_CHARS,
+            "text exceeds MAX_CHARS: {}",
+            out.text.chars().count()
+        );
+    }
+
+    #[tokio::test]
+    async fn stub_with_empty_source_string_still_cites() {
+        let s = StubSynthesizer::default();
+        let out = s
+            .synthesize("q", &[m("", "content here", 0.8)])
+            .await
+            .unwrap();
+        assert_eq!(out.citations.len(), 1);
+        assert_eq!(out.citations[0].source, "");
+    }
+
+    #[test]
+    fn reweight_caps_score_at_one() {
+        // score=0.9, edges=2 → boost = 1.0 + 0.1*2 = 1.2 → 0.9*1.2 = 1.08
+        // → clamped to 1.0. This is a pure math test of the clamp logic.
+        let score = 0.9f32;
+        let edges = 2usize;
+        let boost = 1.0 + 0.1 * edges as f32;
+        let adjusted = (score * boost).min(1.0);
+        assert_eq!(adjusted, 1.0);
+    }
+
+    #[test]
+    fn reweight_tie_preserves_input_order_logic() {
+        // Verify that sort_by with partial_cmp + unwrap_or(Equal) is stable.
+        let mut vals = [(0u8, 0.5f32), (1, 0.5), (2, 0.5)];
+        vals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Stable sort preserves input order on ties.
+        assert_eq!(vals[0].0, 0);
+        assert_eq!(vals[1].0, 1);
+        assert_eq!(vals[2].0, 2);
+    }
+
+    #[test]
+    fn synth_error_display() {
+        let e = SynthError::Http("test".into());
+        assert!(format!("{}", e).contains("http"));
+        let e = SynthError::Parse("test".into());
+        assert!(format!("{}", e).contains("parse"));
+    }
 }

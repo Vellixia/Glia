@@ -21,6 +21,8 @@ base64 = "0.22"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "test-util"] }
+glia-cache = { path = "../glia-cache" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [lints]
 workspace = true

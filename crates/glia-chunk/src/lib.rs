@@ -393,4 +393,118 @@ mod tests {
             assert_eq!(perm.mode() & 0o111, 0o111, "hook should be executable");
         }
     }
+
+    #[test]
+    fn empty_markdown_returns_empty_vec() {
+        let c = Chunker::default();
+        let chunks = c.split("");
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn only_headings_no_body_emits_empty_body_chunks() {
+        let c = Chunker::default();
+        let chunks = c.split("## A\n## B\n");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].heading, "A");
+        assert!(chunks[0].body.trim().is_empty());
+    }
+
+    #[test]
+    fn h3_not_treated_as_split_point() {
+        let c = Chunker::default();
+        let chunks = c.split("### sub\ntext\n## main\nbody\n");
+        // `### sub` should be body, `## main` should split.
+        // First chunk: heading="" (from before first ## ), body="### sub\ntext"
+        // But "### sub\ntext\n" has no `## ` prefix line → all goes to
+        // first chunk with empty heading. Then "## main" splits.
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[1].heading, "main");
+    }
+
+    #[test]
+    fn h1_not_treated_as_split_point() {
+        let c = Chunker::default();
+        let chunks = c.split("# title\n## section\nbody\n");
+        // "# title" → not `## ` prefix → body of first chunk.
+        // "## section" → splits.
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[1].heading, "section");
+    }
+
+    #[test]
+    fn h6_headings_treated_as_body_not_split() {
+        let c = Chunker::default();
+        let chunks = c.split("###### deep\nbody\n");
+        // "###### deep" is NOT "## " prefix → treated as body.
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].heading.is_empty());
+    }
+
+    #[test]
+    fn trailing_heading_no_body_emitted() {
+        let c = Chunker::default();
+        let chunks = c.split("## First\nbody\n## Last\n");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[1].heading, "Last");
+        assert!(chunks[1].body.trim().is_empty());
+    }
+
+    #[test]
+    fn windows_line_endings_handled() {
+        let c = Chunker::default();
+        let chunks = c.split("## A\r\nbody text\r\n");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].heading, "A");
+        // Body may contain \r — documents the gap.
+        assert!(chunks[0].body.contains("body text"));
+    }
+
+    #[test]
+    fn only_frontmatter_no_content() {
+        let c = Chunker::default();
+        let chunks = c.split("---\ntitle: x\n---\n");
+        // No `## ` → one chunk with empty heading.
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].heading.is_empty());
+    }
+
+    #[test]
+    fn max_chars_zero_refine_falls_back() {
+        let c = Chunker::with_max_chars(0);
+        // Every section is > 0 chars → refine tries, but single paragraph
+        // can't split → returns full section.
+        let chunks = c.split("## A\nsingle paragraph\n");
+        assert_eq!(chunks.len(), 1);
+    }
+
+    #[test]
+    fn install_hook_overwrites_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hook_dir = tmp.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hook_dir).unwrap();
+        std::fs::write(hook_dir.join("pre-push"), "old content").unwrap();
+        let path = git::install_pre_push(tmp.path()).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("glia chunk ingest"));
+        assert!(!body.contains("old content"));
+    }
+
+    #[test]
+    fn unicode_chunk_heading() {
+        let c = Chunker::default();
+        let md = "## 标题\n中文内容\n## Another\nbody\n";
+        let chunks = c.split(md);
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks[0].heading, "标题");
+    }
+
+    #[test]
+    fn unicode_chunk_emoji_in_body() {
+        let c = Chunker::default();
+        let md = "## Test 🎫\nbody with 日本語 and émojis\n## Next\nmore\n";
+        let chunks = c.split(md);
+        assert!(chunks.len() >= 2);
+        assert!(chunks[0].body.contains("日本語"));
+    }
 }

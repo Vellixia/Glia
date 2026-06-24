@@ -9,7 +9,7 @@
 use std::io;
 
 use futures_util::{SinkExt, StreamExt};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -52,14 +52,29 @@ impl Default for BridgeConfig {
 /// (we drop the write half but keep draining WS→stdout until the server
 /// closes).
 pub async fn run_bridge(cfg: BridgeConfig) -> Result<(), BridgeError> {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    run_bridge_with_io(cfg, stdin, stdout).await
+}
+
+/// Test-friendly variant of [`run_bridge`] that takes arbitrary IO.
+/// Used by integration tests with `tokio::io::DuplexStream` to exercise
+/// the full stdin/stdout pipeline without a real terminal.
+pub async fn run_bridge_with_io<R, W>(
+    cfg: BridgeConfig,
+    stdin: R,
+    stdout: W,
+) -> Result<(), BridgeError>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     let (ws, _resp) = tokio_tungstenite::connect_async(&cfg.url)
         .await
         .map_err(|e| BridgeError::Connect(e.to_string()))?;
     info!(url = %cfg.url, "ws connected");
     let (ws_sink, mut ws_stream) = ws.split();
 
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
     let (stdout_tx, mut stdout_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
     // stdout writer: drains channel, writes to stdout.

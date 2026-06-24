@@ -818,4 +818,82 @@ mod tests {
         assert_eq!(s.get_str("token"), Some("abc"));
         assert_eq!(s.get_str("missing"), None);
     }
+
+    #[tokio::test]
+    async fn kv_put_empty_key() {
+        let bao = stub();
+        let s = Secret::single("K", "V");
+        bao.kv_put("", &s).await.unwrap();
+        let got = bao.kv_get("").await.unwrap();
+        assert_eq!(got.get_str("K"), Some("V"));
+    }
+
+    #[tokio::test]
+    async fn kv_put_empty_secret() {
+        let bao = stub();
+        let empty = Secret::new(serde_json::Map::new());
+        bao.kv_put("empty-secret", &empty).await.unwrap();
+        let got = bao.kv_get("empty-secret").await.unwrap();
+        assert!(got.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn kv_get_missing_returns_not_found() {
+        let bao = stub();
+        let result = bao.kv_get("never-set").await;
+        assert!(matches!(result, Err(BaoError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn cubbyhole_get_missing_returns_not_found() {
+        let bao = stub();
+        let result = bao.cubbyhole_get("nonexistent-token").await;
+        assert!(matches!(result, Err(BaoError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn transit_encrypt_empty_plaintext() {
+        let bao = stub();
+        let encrypted = bao.transit_encrypt("glia-transit", b"").await.unwrap();
+        assert!(!encrypted.is_empty());
+        let decrypted = bao.transit_decrypt("glia-transit", &encrypted).await.unwrap();
+        assert!(decrypted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stub_unwrap_missing_prefix_returns_api_error() {
+        let bao = stub();
+        let result = bao.unwrap("garbage-no-prefix").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn bao_error_display() {
+        let e = BaoError::NotFound("x".into());
+        assert!(format!("{}", e).contains("not found"));
+        let e = BaoError::Crypto("x".into());
+        assert!(format!("{}", e).contains("crypto"));
+        let e = BaoError::Api("x".into());
+        assert!(format!("{}", e).contains("bao"));
+    }
+
+    #[test]
+    fn secret_single_and_new() {
+        let s = Secret::single("k", "v");
+        assert_eq!(s.get_str("k"), Some("v"));
+        let empty = Secret::new(serde_json::Map::new());
+        assert!(empty.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pre_auth_secret_without_access_token_field() {
+        let bao = Arc::new(stub());
+        let s = Secret::single("other_field", "val");
+        bao.kv_put("secret/data/oauth/no-at", &s).await.unwrap();
+        let cache = Arc::new(InMemoryCache::new());
+        let tc = Arc::new(TokenCache::new(cache.clone(), bao.clone(), "glia-transit"));
+        let ppa = PredictivePreAuth::new(bao, tc);
+        let results = ppa.pre_auth(&["no-at".into()]).await;
+        assert!(!results[0].cached);
+    }
 }

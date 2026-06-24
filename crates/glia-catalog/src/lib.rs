@@ -363,4 +363,58 @@ mod tests {
         let back: CatalogEntry = serde_json::from_str(&j).unwrap();
         assert_eq!(back, e);
     }
+
+    #[tokio::test]
+    async fn stub_fetch_index_empty_tools() {
+        let index = CatalogIndex {
+            version: 1,
+            tools: vec![],
+        };
+        let s = StubCatalog {
+            index,
+            skills: HashMap::new(),
+        };
+        let tools = list_tools(&s).await.unwrap();
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn find_is_case_sensitive() {
+        let index = CatalogIndex {
+            version: 1,
+            tools: vec![entry("Linear-Create-Issue", vec![])],
+        };
+        assert!(index.find("Linear-Create-Issue").is_some());
+        assert!(index.find("linear-create-issue").is_none());
+    }
+
+    #[test]
+    fn find_tool_name_with_special_chars() {
+        let index = CatalogIndex {
+            version: 1,
+            tools: vec![entry("tool:v2", vec![])],
+        };
+        assert!(index.find("tool:v2").is_some());
+        assert!(index.find("tool-v2").is_none());
+    }
+
+    #[test]
+    fn catalog_error_display() {
+        let e = CatalogError::NotFound("x".into());
+        assert!(format!("{}", e).contains("not found"));
+        let e = CatalogError::Http("x".into());
+        assert!(format!("{}", e).contains("http"));
+        let bad: Result<u32, _> = serde_json::from_str("bad");
+        let e = CatalogError::Serde(bad.unwrap_err());
+        assert!(format!("{}", e).contains("serde"));
+    }
+
+    #[test]
+    fn catalog_entry_with_empty_stacks_and_creds() {
+        let e = entry("empty-tool", vec![]);
+        let j = serde_json::to_string(&e).unwrap();
+        let back: CatalogEntry = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, e);
+        assert!(back.creds.is_empty());
+    }
 }

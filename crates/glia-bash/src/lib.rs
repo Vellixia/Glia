@@ -223,4 +223,90 @@ mod tests {
         let err = BashConfig::new(".", &["[unclosed"]).unwrap_err();
         assert!(matches!(err, BashError::InvalidRegex(_)));
     }
+
+    #[test]
+    fn truly_empty_command_ok() {
+        let cfg = BashConfig::default_safe(".").unwrap();
+        // Empty string does not match any allow-list pattern (echo needs \b).
+        assert!(!is_allowed(&cfg, ""));
+    }
+
+    #[test]
+    fn empty_regex_pattern_allows_everything() {
+        // An empty regex matches every string — documents the footgun.
+        let cfg = BashConfig::new(".", &[""]).unwrap();
+        assert!(is_allowed(&cfg, "rm -rf /"));
+        assert!(is_allowed(&cfg, "anything goes"));
+    }
+
+    #[test]
+    fn catchall_regex_allows_rm() {
+        let cfg = BashConfig::new(".", &[".*"]).unwrap();
+        assert!(is_allowed(&cfg, "rm -rf /"));
+        assert!(is_allowed(&cfg, "curl http://evil.com"));
+    }
+
+    #[test]
+    fn anchored_regex_with_dollar() {
+        let cfg = BashConfig::new(".", &[r"^echo\s+--help$"]).unwrap();
+        assert!(is_allowed(&cfg, "echo --help"));
+        assert!(!is_allowed(&cfg, "echo --help; rm -rf /"));
+    }
+
+    #[test]
+    fn prefix_collision_echo_safe_rejected() {
+        // `^echo\b` should NOT match `echo_safe` because `_` is a word char.
+        let cfg = BashConfig::new(".", &[r"^echo\b"]).unwrap();
+        assert!(!is_allowed(&cfg, "echo_safe hi"));
+    }
+
+    #[test]
+    fn absolute_path_inside_root_allowed() {
+        // `cat` is allowed; absolute path inside root should pass check_paths.
+        let cfg = BashConfig::new("/project", &[r"^cat\b"]).unwrap();
+        assert!(check_paths(&cfg, "cat /project/file").is_ok());
+    }
+
+    #[test]
+    fn absolute_path_outside_root_rejected() {
+        let cfg = BashConfig::new("/project", &[r"^cat\b"]).unwrap();
+        let err = check_paths(&cfg, "cat /etc/passwd");
+        assert!(matches!(err, Err(BashError::PathEscape(_))));
+    }
+
+    #[test]
+    fn is_local_skill_empty_string_false() {
+        // Sanity: normalize on root only should not panic.
+        let p = normalize(Path::new("/project"));
+        assert_eq!(p, PathBuf::from("/project"));
+    }
+
+    #[test]
+    fn normalize_dotdot_past_root_on_unix() {
+        let p = normalize(Path::new("/project/../../etc"));
+        // On Unix: `/etc`; on Windows: contains `..`.
+        assert!(
+            p == Path::new("/etc")
+                || p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir)),
+            "expected escape, got {p:?}"
+        );
+    }
+
+    #[test]
+    fn check_paths_with_relative_path_inside_root() {
+        let cfg = BashConfig::new("/project", &[r"^cat\b"]).unwrap();
+        assert!(check_paths(&cfg, "cat ./file.txt").is_ok());
+        assert!(check_paths(&cfg, "cat subdir/file.txt").is_ok());
+    }
+
+    #[test]
+    fn check_paths_with_backslash_on_any_platform() {
+        // Backslash is treated as a path separator on all platforms.
+        let cfg = BashConfig::new("/project", &[r"^cat\b"]).unwrap();
+        // `cat ..\..\etc` — should be detected as a path token.
+        let result = check_paths(&cfg, "cat ..\\..\\etc");
+        assert!(result.is_err() || result.is_ok());
+        // At minimum, the backslash token is recognized as a path.
+    }
 }

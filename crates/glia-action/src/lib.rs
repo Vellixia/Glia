@@ -583,4 +583,192 @@ mod tests {
 
         assert_eq!(result.kind, IntentKind::Remote);
     }
+
+    #[test]
+    fn empty_query_classifies_local() {
+        assert_eq!(
+            classify(&Intent { query: "".into(), stack: None }),
+            IntentKind::Local
+        );
+    }
+
+    #[test]
+    fn whitespace_query_classifies_local() {
+        assert_eq!(
+            classify(&Intent { query: "   ".into(), stack: None }),
+            IntentKind::Local
+        );
+    }
+
+    #[test]
+    fn unicode_emoji_query_classification() {
+        assert_eq!(
+            classify(&Intent { query: "create linear issue 🎫".into(), stack: None }),
+            IntentKind::Remote
+        );
+        assert_eq!(
+            classify(&Intent { query: "cat 📄 file".into(), stack: None }),
+            IntentKind::Local
+        );
+    }
+
+    #[test]
+    fn case_insensitive_linear_substring_match() {
+        assert_eq!(
+            classify(&Intent { query: "LinearCase".into(), stack: None }),
+            IntentKind::Remote
+        );
+    }
+
+    #[test]
+    fn capitalized_linear_classifies_remote() {
+        assert_eq!(
+            classify(&Intent { query: "Linear issue".into(), stack: None }),
+            IntentKind::Remote
+        );
+    }
+
+    #[test]
+    fn mixed_local_remote_markers_remote_wins() {
+        // Contains both "cat" (local hint) and "linear" (remote marker).
+        assert_eq!(
+            classify(&Intent { query: "cat the linear issue".into(), stack: None }),
+            IntentKind::Remote
+        );
+    }
+
+    #[test]
+    fn oauth_marker_classifies_remote() {
+        assert_eq!(
+            classify(&Intent { query: "oauth flow".into(), stack: None }),
+            IntentKind::Remote
+        );
+    }
+
+    #[test]
+    fn each_remote_marker_classifies_remote() {
+        for marker in &[
+            "linear", "github", "notion", "slack", "supabase", "stripe", "jira", "oauth",
+        ] {
+            assert_eq!(
+                classify(&Intent { query: format!("test {marker} here"), stack: None }),
+                IntentKind::Remote,
+                "marker '{marker}' should classify as Remote"
+            );
+        }
+    }
+
+    #[test]
+    fn cosine_length_mismatch_returns_zero() {
+        assert_eq!(cosine(&[1.0, 0.0], &[1.0, 0.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn cosine_empty_returns_zero() {
+        assert_eq!(cosine(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn cosine_zero_vector_returns_zero() {
+        assert_eq!(cosine(&[0.0, 0.0, 0.0], &[1.0, 1.0, 1.0]), 0.0);
+    }
+
+    #[test]
+    fn cosine_nan_inputs_sort_as_equal() {
+        let nan_val = f32::NAN;
+        // NaN in cosine → dot product becomes NaN → partial_cmp returns
+        // None → unwrap_or(Equal). Test that it doesn't panic.
+        let result = cosine(&[nan_val], &[1.0]);
+        assert!(result.is_nan() || result == 0.0);
+    }
+
+    #[test]
+    fn rank_skills_k_zero_returns_empty() {
+        let skills = vec![Skill {
+            content: "x".into(),
+            source: "x.md".into(),
+            embedding: vec![1.0],
+            updated_at: now(),
+        }];
+        let ranked = rank_skills(&[1.0], &skills, 0);
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn rank_skills_k_exceeds_count_returns_all() {
+        let skills = vec![
+            Skill {
+                content: "a".into(),
+                source: "a.md".into(),
+                embedding: vec![1.0],
+                updated_at: now(),
+            },
+            Skill {
+                content: "b".into(),
+                source: "b.md".into(),
+                embedding: vec![0.0],
+                updated_at: now(),
+            },
+        ];
+        let ranked = rank_skills(&[1.0], &skills, 10);
+        assert_eq!(ranked.len(), 2);
+    }
+
+    #[test]
+    fn rank_skills_empty_input_returns_empty() {
+        let ranked = rank_skills(&[1.0], &[], 5);
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn rank_skills_tie_scores_preserve_input_order() {
+        // Two skills with identical embeddings → identical scores →
+        // stable sort preserves input order.
+        let skills = vec![
+            Skill {
+                content: "first".into(),
+                source: "first.md".into(),
+                embedding: vec![1.0, 0.0],
+                updated_at: now(),
+            },
+            Skill {
+                content: "second".into(),
+                source: "second.md".into(),
+                embedding: vec![1.0, 0.0],
+                updated_at: now(),
+            },
+        ];
+        let ranked = rank_skills(&[1.0, 0.0], &skills, 2);
+        assert_eq!(ranked[0].source, "first.md");
+        assert_eq!(ranked[1].source, "second.md");
+    }
+
+    #[test]
+    fn stub_executor_empty_response() {
+        let exec = StubExecutor { response: String::new() };
+        // Just verify it doesn't panic — actual exec is async.
+        assert!(exec.response.is_empty());
+    }
+
+    #[test]
+    fn unicode_action_intent_classification_full() {
+        use IntentKind;
+        // Full unicode + emoji coverage.
+        assert_eq!(
+            classify(&Intent { query: "create linear issue 🎫".into(), stack: None }),
+            IntentKind::Remote
+        );
+        assert_eq!(
+            classify(&Intent { query: "cat 📄 file.txt".into(), stack: None }),
+            IntentKind::Local
+        );
+        assert_eq!(
+            classify(&Intent { query: "日本語のファイルを開く".into(), stack: None }),
+            IntentKind::Local
+        );
+        assert_eq!(
+            classify(&Intent { query: "créer un ticket linear".into(), stack: None }),
+            IntentKind::Remote
+        );
+    }
 }

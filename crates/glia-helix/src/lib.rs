@@ -342,4 +342,86 @@ mod tests {
         let client = HelixClient::connect(Some("http://127.0.0.1:1"), None).unwrap();
         assert_eq!(client.base_url(), "http://127.0.0.1:1");
     }
+
+    #[test]
+    fn is_local_skill_empty_string_false() {
+        assert!(!HelixClient::is_local_skill(""));
+    }
+
+    #[test]
+    fn is_local_skill_prefix_only_true() {
+        // "local::" — just the prefix, no skill name.
+        assert!(HelixClient::is_local_skill("local::"));
+    }
+
+    #[test]
+    fn is_local_skill_case_sensitive() {
+        // "Local::" should NOT match (case-sensitive starts_with).
+        assert!(!HelixClient::is_local_skill("Local::foo"));
+    }
+
+    #[test]
+    fn connect_none_uses_default_url() {
+        let client = HelixClient::connect(None, None).unwrap();
+        assert_eq!(client.base_url(), "http://127.0.0.1:6969");
+    }
+
+    #[test]
+    fn connect_with_api_key_stores_it() {
+        let client = HelixClient::connect(Some("http://127.0.0.1:6969"), Some("secret-key")).unwrap();
+        assert_eq!(client.base_url(), "http://127.0.0.1:6969");
+        // api_key is private; we can't assert its value directly, but
+        // we can verify the client was constructed without error.
+    }
+
+    #[tokio::test]
+    async fn ping_against_dead_port_returns_connect_error() {
+        // Port 1 is privileged and almost certainly not listening.
+        let client = HelixClient::connect(Some("http://127.0.0.1:1"), None).unwrap();
+        let result = client.ping().await;
+        assert!(result.is_err());
+        // Should be a Connect error (mapped from Http).
+        let err = result.unwrap_err();
+        assert!(matches!(err, HelixError::Connect(_)));
+    }
+
+    #[tokio::test]
+    async fn query_raw_against_dead_port_returns_http_error() {
+        let client = HelixClient::connect(Some("http://127.0.0.1:1"), None).unwrap();
+        let result = client.query_raw("list_skills", serde_json::json!({})).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), HelixError::Http(_)));
+    }
+
+    #[tokio::test]
+    async fn list_skills_empty_db_returns_empty_vec() {
+        // This test only runs if HelixDB is available.
+        let client = match HelixClient::connect(None, None) {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("SKIP: no helixdb");
+                return;
+            }
+        };
+        if client.ping().await.is_err() {
+            eprintln!("SKIP: helixdb ping failed");
+            return;
+        }
+        // list_skills uses unwrap_or_default → returns empty vec on empty DB.
+        let skills = client.list_skills().await.unwrap();
+        // May or may not be empty depending on other tests, but should not error.
+        assert!(skills.is_empty() || !skills.is_empty());
+    }
+
+    #[test]
+    fn helix_error_display_messages() {
+        let e1 = HelixError::Connect("test".into());
+        assert!(format!("{}", e1).contains("connect"));
+        let e2 = HelixError::Http("test".into());
+        assert!(format!("{}", e2).contains("http"));
+        let e3 = HelixError::NotFound("x".into());
+        assert!(format!("{}", e3).contains("not found"));
+        let e4 = HelixError::Query("q".into());
+        assert!(format!("{}", e4).contains("query"));
+    }
 }

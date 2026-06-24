@@ -203,4 +203,76 @@ mod tests {
         let v = e.embed("   ").expect("embed");
         assert_eq!(v.len(), 384);
     }
+
+    #[test]
+    fn missing_asset_returns_missing_asset_error() {
+        // ModelAssets::get returns None for nonexistent files.
+        let result = ModelAssets::get("nonexistent-file.bin");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn embed_error_display_messages() {
+        let e = EmbedError::MissingAsset("model.safetensors");
+        assert!(format!("{}", e).contains("missing model asset"));
+        let e = EmbedError::Empty;
+        assert!(format!("{}", e).contains("empty"));
+        let e = EmbedError::Tokenizer("test".into());
+        assert!(format!("{}", e).contains("tokenizer"));
+        let e = EmbedError::Config("test".into());
+        assert!(format!("{}", e).contains("config"));
+    }
+
+    #[test]
+    fn embed_punctuation_only_still_embeds() {
+        let Some(e) = try_embedder() else { return };
+        let v = e.embed("!@#$%^&*()").expect("embed punctuation");
+        assert_eq!(v.len(), 384);
+    }
+
+    #[test]
+    fn embed_text_with_newlines() {
+        let Some(e) = try_embedder() else { return };
+        let v = e.embed("line1\nline2\nline3").expect("embed newlines");
+        assert_eq!(v.len(), 384);
+    }
+
+    #[test]
+    fn embed_cjk_and_emoji_embeds() {
+        let Some(e) = try_embedder() else { return };
+        let v = e.embed("你好 🐍 world").expect("embed unicode");
+        assert_eq!(v.len(), 384);
+    }
+
+    #[test]
+    fn embed_twice_does_not_pollute_state() {
+        let Some(e) = try_embedder() else { return };
+        let a1 = e.embed("first text").expect("first embed");
+        let _ = e.embed("second text").expect("second embed");
+        let a1_again = e.embed("first text").expect("re-embed first");
+        // Re-embedding the same text should produce the same vector (no state pollution).
+        let s = cos(&a1, &a1_again);
+        assert!(s > 0.99, "expected ~1.0, got {s}");
+    }
+
+    #[test]
+    fn embed_one_word_diff_has_high_cosine() {
+        let Some(e) = try_embedder() else { return };
+        let a = e.embed("the cat sat on the mat").expect("a");
+        let b = e.embed("the cat sat on the rug").expect("b");
+        let s = cos(&a, &b);
+        assert!(s > 0.85, "one-word diff should have high cosine, got {s}");
+    }
+
+    #[test]
+    fn embed_unrelated_text_lower_than_identical() {
+        let Some(e) = try_embedder() else { return };
+        let a = e.embed("cat sat mat").expect("a");
+        let same = e.embed("cat sat mat").expect("same");
+        let diff = e.embed("rocket orbit mars").expect("diff");
+        let sim_same = cos(&a, &same);
+        let sim_diff = cos(&a, &diff);
+        // Identical text should always score higher than different text.
+        assert!(sim_same > sim_diff, "identical {sim_same} should exceed different {sim_diff}");
+    }
 }

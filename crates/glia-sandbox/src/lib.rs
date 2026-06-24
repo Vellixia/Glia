@@ -108,6 +108,52 @@ impl OpenBaoUnwrapper for MockUnwrapper {
     }
 }
 
+/// Mock unwrapper that always fails — for testing unwrap error propagation.
+#[cfg(any(test, feature = "mock"))]
+pub struct FailingUnwrapper;
+
+#[cfg(any(test, feature = "mock"))]
+impl OpenBaoUnwrapper for FailingUnwrapper {
+    fn unwrap(&self, _wrapping_token: &str) -> Result<Secret, SandboxError> {
+        Err(SandboxError::Unwrap("mock unwrap failure".to_string()))
+    }
+}
+
+/// Mock unwrapper that only accepts a specific token (simulates single-use).
+#[cfg(any(test, feature = "mock"))]
+pub struct SingleUseUnwrapper {
+    valid_token: String,
+    used: std::sync::Mutex<bool>,
+    secret: Secret,
+}
+
+#[cfg(any(test, feature = "mock"))]
+impl SingleUseUnwrapper {
+    /// Create a single-use unwrapper that only accepts `valid_token` once.
+    pub fn new(valid_token: &str, secret: Secret) -> Self {
+        Self {
+            valid_token: valid_token.to_string(),
+            used: std::sync::Mutex::new(false),
+            secret,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "mock"))]
+impl OpenBaoUnwrapper for SingleUseUnwrapper {
+    fn unwrap(&self, wrapping_token: &str) -> Result<Secret, SandboxError> {
+        let mut used = self.used.lock().unwrap();
+        if *used {
+            return Err(SandboxError::Unwrap("token already consumed".to_string()));
+        }
+        if wrapping_token != self.valid_token {
+            return Err(SandboxError::Unwrap("invalid token".to_string()));
+        }
+        *used = true;
+        Ok(self.secret.clone())
+    }
+}
+
 /// Result of a sandbox execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxOutput {
@@ -352,5 +398,82 @@ mod tests {
         let result = pick_runtime(&[Runtime::Docker, Runtime::Npx, Runtime::Uvx]);
         // Result depends on what's installed — just verify it doesn't panic.
         let _ = result;
+    }
+
+    #[test]
+    fn empty_wrapping_token_passed_to_unwrapper() {
+        let unwrapper = MockUnwrapper::new(secret_env("K", "V"));
+        let mut sandbox = Sandbox::new(&unwrapper);
+        // Empty string token — mock accepts it, but real OpenBao would reject.
+        sandbox.stage_token("").unwrap();
+        assert_eq!(unwrapper.last_token(), Some(String::new()));
+        assert!(sandbox.has_staged_secrets());
+    }
+
+    #[test]
+    fn unwrap_failure_propagates_from_stage_token() {
+        let unwrapper = FailingUnwrapper;
+        let mut sandbox = Sandbox::new(&unwrapper);
+        let err = sandbox.stage_token("any-token").unwrap_err();
+        assert!(matches!(err, SandboxError::Unwrap(_)));
+        assert!(!sandbox.has_staged_secrets());
+    }
+
+    #[test]
+    fn failing_mock_rejects_token_reuse() {
+        let unwrapper = SingleUseUnwrapper::new("one-time-token", secret_env("K", "V"));
+        let mut sandbox = Sandbox::new(&unwrapper);
+        // First use succeeds.
+        sandbox.stage_token("one-time-token").unwrap();
+        assert!(sandbox.has_staged_secrets());
+        sandbox.purge();
+        // Second use of same token fails.
+        let err = sandbox.stage_token("one-time-token").unwrap_err();
+        assert!(matches!(err, SandboxError::Unwrap(_)));
+    }
+
+    #[test]
+    fn single_use_unwrapper_rejects_wrong_token() {
+        let unwrapper = SingleUseUnwrapper::new("correct", secret_env("K", "V"));
+        let err = unwrapper.unwrap("wrong").unwrap_err();
+        assert!(matches!(err, SandboxError::Unwrap(_)));
+    }
+
+    #[test]
+    fn empty_secret_value_injected() {
+        let mut env = HashMap::new();
+        env.insert("EMPTY_KEY".to_string(), String::new());
+        let unwrapper = MockUnwrapper::new(Secret { env });
+        let mut sandbox = Sandbox::new(&unwrapper);
+        sandbox.stage_token("tok").unwrap();
+        assert!(sandbox.has_staged_secrets());
+        // The secret with empty value is staged.
+    }
+
+    #[test]
+    fn has_staged_secrets_false_after_unwrap_error() {
+        let unwrapper = FailingUnwrapper;
+        let mut sandbox = Sandbox::new(&unwrapper);
+        sandbox.stage_token("tok").unwrap_err();
+        assert!(!sandbox.has_staged_secrets());
+    }
+
+    #[test]
+    fn multiple_staged_secrets_all_held() {
+        let unwrapper = MockUnwrapper::new(secret_env("K", "V"));
+        let mut sandbox = Sandbox::new(&unwrapper);
+        sandbox.stage_token("t1").unwrap();
+        sandbox.stage_token("t2").unwrap();
+        sandbox.stage_token("t3").unwrap();
+        assert!(sandbox.has_staged_secrets());
+        sandbox.purge();
+        assert!(!sandbox.has_staged_secrets());
+    }
+
+    #[test]
+    fn probe_runtimes_found_flag_matches_which_check() {
+        let results = probe_runtimes(&[Runtime::Npx]);
+        let found = which_check("npx").is_ok();
+        assert_eq!(results[0].found, found);
     }
 }

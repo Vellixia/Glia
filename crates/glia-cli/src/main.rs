@@ -134,20 +134,30 @@ pub enum Cmd {
         #[arg(long, env = "GLIA_REPO_ROOT", default_value = ".", global = true)]
         repo_root: PathBuf,
     },
+    /// Load context for a file or stack (T17). Called by the Claude
+    /// PreToolUse hook installed by `glia init`.
+    #[command(name = "context")]
+    Context {
+        /// Stacks to load context for (repeatable).
+        #[arg(long, value_delimiter = ',')]
+        stacks: Vec<String>,
+        /// File to detect stacks from (used when --stacks is empty).
+        #[arg(long)]
+        file: Option<String>,
+        /// Hub HelixDB URL.
+        #[arg(long, env = "GLIA_HUB_URL", default_value = "http://127.0.0.1:6969")]
+        hub: String,
+        /// Bearer token for the Hub.
+        #[arg(long, env = "GLIA_HUB_TOKEN")]
+        token: Option<String>,
+    },
 }
 
 /// `glia chunk` subcommands.
 #[derive(Debug, Subcommand)]
 pub enum ChunkOp {
     /// Ingest all skill files under `<repo>/skills/`.
-    Ingest {
-        /// Ingest all tracked skills (overrides `--changed`).
-        #[arg(long, default_value_t = false)]
-        all: bool,
-        /// Ingest only files changed since last commit.
-        #[arg(long, default_value_t = false)]
-        changed: bool,
-    },
+    Ingest,
 }
 
 #[tokio::main]
@@ -159,31 +169,28 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let Cli { cmd } = Cli::parse();
-    match cmd {
+    let result = match cmd {
         Cmd::Bridge { hub_url } => {
             tracing::info!(url = %hub_url, "starting bridge");
             let cfg = glia_bridge::BridgeConfig { url: hub_url };
-            glia_bridge::run_bridge(cfg).await?;
+            glia_bridge::run_bridge(cfg).await.map_err(Into::into)
         }
         Cmd::Sync {
             hub,
             token,
             status_only,
-        } => {
-            run_sync(hub, token, status_only).await?;
-        }
+        } => run_sync(hub, token, status_only).await,
         Cmd::Init { repo_root } => {
             let result = glia_init::run(&repo_root).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
         }
         Cmd::Action {
             intent,
             stack,
             hub,
             token,
-        } => {
-            run_action(intent, stack, hub, token).await?;
-        }
+        } => run_action(intent, stack, hub, token).await,
         Cmd::SaveSkill {
             description,
             name,
@@ -206,26 +213,67 @@ async fn main() -> anyhow::Result<()> {
                 hub,
                 token,
             )
-            .await?;
+            .await
         }
         Cmd::Use {
             tool,
             catalog_url,
             hub,
             token,
-        } => {
-            run_use(tool, catalog_url, hub, token).await?;
-        }
+        } => run_use(tool, catalog_url, hub, token).await,
         Cmd::Chunk {
             op,
             hub,
             token,
             repo_root,
-        } => {
-            run_chunk(op, hub, token, repo_root).await?;
+        } => run_chunk(op, hub, token, repo_root).await,
+        Cmd::Context {
+            stacks,
+            file,
+            hub,
+            token,
+        } => run_context(stacks, file, hub, token).await,
+    };
+    // Map error categories to specific exit codes per SPEC V14/V15.
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if is_auth_timeout(&e) {
+                std::process::exit(3);
+            }
+            if is_hub_unreachable(&e) {
+                std::process::exit(2);
+            }
+            Err(e)
         }
     }
-    Ok(())
+}
+
+/// Check if an anyhow error chain indicates the Hub is unreachable.
+fn is_hub_unreachable(err: &anyhow::Error) -> bool {
+    // SyncError::HubUnreachable is the explicit signal.
+    if err
+        .downcast_ref::<glia_sync::SyncError>()
+        .is_some_and(|e| matches!(e, glia_sync::SyncError::HubUnreachable(_)))
+    {
+        return true;
+    }
+    // Walk the error chain looking for HelixDB connection/HTTP errors
+    // (the Hub's data plane). Catalog errors are NOT Hub errors.
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<glia_helix::HelixError>()
+            .is_some_and(|e| {
+                matches!(e, glia_helix::HelixError::Connect(_) | glia_helix::HelixError::Http(_))
+            })
+    })
+}
+
+/// Check if an anyhow error chain indicates AUTH_TIMEOUT (SPEC V14).
+/// Exit code 3 is used so the AI agent can distinguish "auth timed out"
+/// from "Hub is down" (exit 2).
+fn is_auth_timeout(err: &anyhow::Error) -> bool {
+    err.to_string().contains("AUTH_TIMEOUT")
 }
 
 async fn hub_client(hub: String, token: Option<String>) -> anyhow::Result<glia_helix::HelixClient> {
@@ -276,10 +324,17 @@ async fn run_action(
 /// URL) and waits up to the given timeout on the localhost callback. Real OAuth
 /// provider URL + code exchange lands when OpenBao dynamic creds are wired
 /// end-to-end (T14).
+///
+/// Returns `Err(AuthError::Timeout(_))` on timeout so callers can exit
+/// with a non-zero code (surfaces AUTH_TIMEOUT to the AI agent per SPEC V14).
 pub async fn handle_auth_required(
     deps: &[glia_action::MissingDep],
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
+    if deps.is_empty() {
+        // No auth required — nothing to wait for.
+        return Ok(());
+    }
     eprintln!(
         "AUTH_REQUIRED: {} dependency(ies) missing. Opening browser callback...",
         deps.len()
@@ -299,19 +354,22 @@ pub async fn handle_auth_required(
         );
     }
 
-    match waiter.wait_for_callback(timeout).await {
+    let result = waiter.wait_for_callback(timeout).await;
+    waiter.shutdown().await;
+    match result {
         Ok(code) => {
             eprintln!("AUTH: received code (state={})", code.state);
+            Ok(())
         }
         Err(glia_auth::AuthError::Timeout(d)) => {
             eprintln!("AUTH: timed out after {:?}", d);
+            Err(anyhow::anyhow!("AUTH_TIMEOUT after {d:?}"))
         }
         Err(e) => {
             eprintln!("AUTH: error: {}", e);
+            Err(anyhow::anyhow!("AUTH_ERROR: {e}"))
         }
     }
-    waiter.shutdown().await;
-    Ok(())
 }
 
 /// Best-effort cross-platform browser open. Fallback is no-op (user gets URL on stderr).
@@ -367,7 +425,19 @@ async fn run_save_skill(
         .await?;
     // Write the markdown file alongside so the repo has it on disk too.
     let _ = local;
-    println!("{}", serde_json::json!({ "id": id }));
+    let source = if id.starts_with("local::") {
+        id.clone()
+    } else {
+        format!("local::{}", id)
+    };
+    let name = hint_name.clone().unwrap_or_else(|| id.clone());
+    let output = serde_json::json!({
+        "id": id,
+        "source": source,
+        "stacks": stacks_ref,
+        "name": name,
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -395,8 +465,7 @@ async fn run_chunk(
     token: Option<String>,
     repo_root: PathBuf,
 ) -> anyhow::Result<()> {
-    let ChunkOp::Ingest { all: _, changed } = op;
-    let _ = changed;
+    let ChunkOp::Ingest = op;
     let skills_dir = repo_root.join("skills");
     if !skills_dir.is_dir() {
         eprintln!(
@@ -444,6 +513,56 @@ async fn run_chunk(
     Ok(())
 }
 
+/// Load context for the given file (or stack filter). Called by the
+/// Claude PreToolUse hook installed by `glia init` — outputs the
+/// synthesized context text to stdout for the agent to consume.
+async fn run_context(
+    stacks: Vec<String>,
+    file: Option<String>,
+    hub: String,
+    token: Option<String>,
+) -> anyhow::Result<()> {
+    use glia_context::{ContextLoader, DefaultStackDetector};
+    use glia_helix::HelixClient;
+    use glia_synth::StubSynthesizer;
+    use std::sync::Arc;
+
+    let client = HelixClient::connect(Some(&hub), token.as_deref())?;
+    let embedder = match glia_embed::Embedder::try_new() {
+        Some(e) => Arc::new(e),
+        None => {
+            eprintln!("glia-embed: model assets missing; context unavailable");
+            println!();
+            return Ok(());
+        }
+    };
+    let synth: Arc<dyn glia_synth::Synthesizer> = Arc::new(StubSynthesizer::default());
+    let detector: Arc<dyn glia_context::StackDetector> = Arc::new(DefaultStackDetector);
+    let loader = ContextLoader::new(client, embedder, synth, detector);
+
+    // If --file is given, load context for that file.
+    // Otherwise emit an empty context (the agent can pass --file).
+    let file_path = match file {
+        Some(f) => std::path::PathBuf::from(f),
+        None => {
+            eprintln!(
+                "glia context: --file is required (or use --stacks to filter)"
+            );
+            println!();
+            return Ok(());
+        }
+    };
+
+    // When --stacks is provided, use it as a hint (filter the detected set).
+    // The ContextLoader detects stacks from the file automatically;
+    // we filter the output by the requested stack set if provided.
+    let _ = stacks; // currently informational; detector handles filtering.
+
+    let result = loader.load_context(&file_path).await?;
+    print!("{}", result.text);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,14 +570,27 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
-    async fn handle_auth_required_times_out_cleanly() {
-        // No callback arrives — verify the helper exits cleanly with short timeout.
+    async fn handle_auth_required_times_out_returns_error() {
+        // No callback arrives — the helper now returns Err(AUTH_TIMEOUT)
+        // so the CLI exits with code 3 (SPEC V14).
         let deps = vec![MissingDep {
             tool: "linear-create".into(),
             cred: "linear_oauth".into(),
         }];
         let result = handle_auth_required(&deps, Duration::from_millis(150)).await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("AUTH_TIMEOUT"),
+            "expected AUTH_TIMEOUT error"
+        );
+    }
+
+    #[test]
+    fn is_auth_timeout_detects_auth_timeout_string() {
+        let err = anyhow::anyhow!("AUTH_TIMEOUT after 120s");
+        assert!(super::is_auth_timeout(&err));
+        let err = anyhow::anyhow!("db: connection refused");
+        assert!(!super::is_auth_timeout(&err));
     }
 
     #[tokio::test]

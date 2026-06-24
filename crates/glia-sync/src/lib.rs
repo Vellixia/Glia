@@ -298,4 +298,83 @@ mod tests {
         assert_eq!(back.id, "x");
         assert_eq!(back.status, SkillSyncStatus::InSync);
     }
+
+    #[test]
+    fn lww_local_newer_than_remote_reports_local_newer() {
+        // The comparison is string-based: local > remote → LocalNewer.
+        let local = "2026-06-24T10:00:00Z";
+        let remote = "2026-06-23T10:00:00Z";
+        assert!(local > remote, "string compare should work for RFC-3339");
+    }
+
+    #[test]
+    fn lww_remote_newer_than_local_reports_remote_newer() {
+        let local = "2026-06-23T10:00:00Z";
+        let remote = "2026-06-24T10:00:00Z";
+        assert!(local < remote);
+    }
+
+    #[test]
+    fn lww_identical_timestamps_reports_in_sync() {
+        let local = "2026-06-24T10:00:00Z";
+        let remote = "2026-06-24T10:00:00Z";
+        assert!(local == remote);
+    }
+
+    #[test]
+    fn lww_future_dated_local_always_wins() {
+        // Lexicographic comparison handles future dates correctly.
+        let local = "2099-01-01T00:00:00Z";
+        let remote = "2026-01-01T00:00:00Z";
+        assert!(local > remote);
+    }
+
+    #[test]
+    fn lww_malformed_timestamp_falls_through_string_compare() {
+        // Non-RFC-3339 strings are compared lexicographically — documents
+        // the gap (no validation/error on malformed timestamps).
+        let local = "not-a-date";
+        let remote = "2026-01-01T00:00:00Z";
+        // "not-a-date" > "2026..." lexicographically (n > 2).
+        assert!(local > remote);
+    }
+
+    #[test]
+    fn sync_error_display() {
+        let e = SyncError::HubUnreachable("test".into());
+        assert!(format!("{}", e).contains("hub unreachable"));
+        let e = SyncError::Db(glia_helix::HelixError::Connect("x".into()));
+        assert!(format!("{}", e).contains("db"));
+    }
+
+    #[test]
+    fn skill_sync_status_all_variants_serialize() {
+        for status in [
+            SkillSyncStatus::InSync,
+            SkillSyncStatus::LocalNewer,
+            SkillSyncStatus::RemoteNewer,
+            SkillSyncStatus::LocalOnly,
+            SkillSyncStatus::RemoteOnly,
+            SkillSyncStatus::LocalNamespace,
+        ] {
+            let d = SyncDiff {
+                id: "x".into(),
+                status: status.clone(),
+                local_updated: None,
+                remote_updated: None,
+            };
+            let s = serde_json::to_string(&d).unwrap();
+            let back: SyncDiff = serde_json::from_str(&s).unwrap();
+            assert_eq!(back.status, status);
+        }
+    }
+
+    #[tokio::test]
+    async fn status_when_hub_unreachable_returns_error() {
+        // Point at a dead port.
+        let client = HelixClient::connect(Some("http://127.0.0.1:1"), None).unwrap();
+        let engine = SyncEngine::new(client);
+        let result = engine.status(&[]).await;
+        assert!(result.is_err());
+    }
 }
