@@ -11,7 +11,7 @@ cargo build --release -p glia-cli
 ```
 
 Requires Rust 1.89+ and a C/C++ toolchain (for `rocksdb` on the Hub side;
-the CLI itself uses `SurrealKV`, which is pure Rust).
+the CLI itself uses `HelixDB`, which is pure Rust).
 
 ## Subcommands
 
@@ -23,7 +23,7 @@ Usage: glia <COMMAND>
 
 Commands:
   bridge      stdio <-> WebSocket translator. Connects to the Glia Hub /gateway
-  sync        Bidirectional sync between local and Hub SurrealDB
+  sync        Bidirectional sync between local and Hub HelixDB
   init        Scan repo, detect stacks, batch auth
   action      Unified tool discover + skill fetch + exec
   save-skill  Author and register a new local skill
@@ -62,7 +62,7 @@ glia action --intent "create a Linear issue for the login bug"
 The one call. The CLI:
 
 1. Embeds the intent locally (`candle`).
-2. Looks up matching skills + tools in local SurrealKV (V1: ⊥ Hub network).
+2. Looks up matching skills + tools in local HelixDB (V1: ⊥ Hub network).
 3. If a tool needs creds, opens `AUTH_REQUIRED` flow against the Hub.
 4. Hands off to Hub sandbox, gets result, synthesizes (≤150 tokens).
 5. Returns JSON.
@@ -91,7 +91,7 @@ glia save-skill --interactive       # opens $EDITOR
 
 Calls an OpenAI-compatible LLM (configured via `OPENAI_API_KEY`,
 `ANTHROPIC_API_KEY`, or local `OLLAMA_HOST`) to author the markdown,
-embeds it locally, and stores it under `local::use-zustand` in SurrealKV.
+embeds it locally, and stores it under `local::use-zustand` in HelixDB.
 Falls back to a template if no LLM is reachable.
 
 ### `glia use <name>`
@@ -102,7 +102,7 @@ glia use linear                       # pulls from community-catalog
 
 Fetches the markdown skill from `Vellixia/community-catalog`, runs it
 in a private sandbox to register, stores it under `community::linear` in
-local SurrealKV, and syncs to the Hub on the next `glia sync`.
+local HelixDB, and syncs to the Hub on the next `glia sync`.
 
 ### `glia sync`
 
@@ -122,7 +122,7 @@ skills (`local::*`) never sync to the Hub.
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `GLIA_HUB_URL` | `ws://127.0.0.1:6969/gateway` | Hub WebSocket |
-| `GLIA_SYNC_URL` | `ws://127.0.0.1:8000` | SurrealDB sync |
+| `GLIA_SYNC_URL` | `ws://127.0.0.1:8000` | HelixDB sync |
 | `GLIA_CATALOG` | `Vellixia/community-catalog/main` | Catalog repo + ref |
 | `GLIA_AUTH_TIMEOUT` | `120` | seconds |
 | `OPENAI_API_KEY` | — | Synthesis LLM (any OpenAI-compat) |
@@ -133,7 +133,7 @@ skills (`local::*`) never sync to the Hub.
 
 | Path | Holds |
 |------|-------|
-| `~/.glia/local.db/` | Embedded SurrealKV |
+| `~/.glia/local.db/` | Embedded HelixDB |
 | `~/.glia/skills/` | Authored skill markdown |
 | `~/.glia/hooks/` | Per-repo hooks |
 | `~/.glia/whitelist.toml` | `glia-bash` allow-list |

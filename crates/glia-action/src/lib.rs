@@ -4,6 +4,9 @@
 //! V1 (graph), V2 (parallel), V3 (AUTH_REQUIRED surfacing), V4 (citation),
 //! V13 (local/remote intent registry).
 //!
+//! v0.2.0: talks to the Hub via `HelixClient` (HTTP). Replaces the
+//! SurrealDB-backed DB handle from v0.1.0.
+//!
 //! Pipeline:
 //! 1. `classify` — split intent into Local vs Remote
 //! 2. `discover` — vector search over skills for the intent query
@@ -17,15 +20,15 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use glia_db::{GliaDb, Skill, Tool};
 use glia_embed::Embedder;
+use glia_helix::{HelixClient, HelixError, Skill, Tool};
 
 /// Errors from action orchestration.
 #[derive(Debug, thiserror::Error)]
 pub enum ActionError {
     /// DB query failed.
     #[error("db: {0}")]
-    Db(#[from] glia_db::DbError),
+    Db(#[from] HelixError),
     /// Embedder failed.
     #[error("embed: {0}")]
     Embed(#[from] glia_embed::EmbedError),
@@ -174,7 +177,7 @@ pub fn rank_skills(query_vec: &[f32], skills: &[Skill], k: usize) -> Vec<SkillMa
             content: s.content.clone(),
             source: s.source.clone(),
             score: cosine(query_vec, &s.embedding),
-            local: glia_db::GliaDb::is_local_skill(&s.source),
+            local: HelixClient::is_local_skill(&s.source),
         })
         .collect();
     scored.sort_by(|a, b| {
@@ -188,7 +191,7 @@ pub fn rank_skills(query_vec: &[f32], skills: &[Skill], k: usize) -> Vec<SkillMa
 
 /// Action orchestrator. Holds shared deps and a pluggable executor.
 pub struct Action {
-    db: Arc<GliaDb>,
+    client: HelixClient,
     embedder: Arc<Embedder>,
     executor: Arc<dyn Executor>,
     /// Top-K for skill ranking.
@@ -197,9 +200,9 @@ pub struct Action {
 
 impl Action {
     /// Build a new action with the given deps.
-    pub fn new(db: Arc<GliaDb>, embedder: Arc<Embedder>, executor: Arc<dyn Executor>) -> Self {
+    pub fn new(client: HelixClient, embedder: Arc<Embedder>, executor: Arc<dyn Executor>) -> Self {
         Self {
-            db,
+            client,
             embedder,
             executor,
             top_k: 5,
@@ -256,7 +259,7 @@ impl Action {
     ) -> Result<Vec<SkillMatch>, ActionError> {
         let all = self.all_skills().await?;
         if let Some(stack_id) = stack {
-            let for_stack = self.db.skills_for_stack(stack_id).await?;
+            let for_stack = self.client.skills_for_stack(stack_id).await?;
             let ids: std::collections::HashSet<String> =
                 for_stack.into_iter().map(|s| s.source).collect();
             let filtered: Vec<Skill> = all
@@ -271,7 +274,7 @@ impl Action {
 
     /// Pull every skill from the DB.
     async fn all_skills(&self) -> Result<Vec<Skill>, ActionError> {
-        Ok(self.db.list_skills().await?)
+        Ok(self.client.list_skills().await?)
     }
 
     /// Graph walk: for remote intents, find tools that require auth.
@@ -293,7 +296,7 @@ impl Action {
         let mut missing = Vec::new();
         let mut tools = Vec::new();
         for cred in &cred_ids {
-            let required = self.db.tools_requiring_auth(cred).await?;
+            let required = self.client.tools_requiring_auth(cred).await?;
             for tool in required {
                 missing.push(MissingDep {
                     tool: tool.name.clone(),
@@ -307,25 +310,27 @@ impl Action {
 
     /// List every cred id via the typed select API (RecordIdKey → String).
     async fn list_cred_ids(&self) -> Result<Vec<String>, ActionError> {
-        Ok(self.db.list_cred_ids().await?)
+        Ok(self.client.list_cred_ids().await?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::{Auth, Connection, Skill, Stack, Tool};
+    use glia_helix::{Auth, Stack};
     use std::sync::Arc;
 
     fn now() -> String {
         Utc::now().to_rfc3339()
     }
 
-    async fn setup() -> Option<(Arc<GliaDb>, Arc<Embedder>)> {
-        let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
+    async fn setup() -> Option<(HelixClient, Arc<Embedder>)> {
         let emb = Arc::new(Embedder::try_new()?);
-        Some((db, emb))
+        let client = HelixClient::connect(None, None).ok()?;
+        if client.ping().await.is_err() {
+            return None;
+        }
+        Some((client, emb))
     }
 
     #[tokio::test]
@@ -353,8 +358,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn rank_skills_orders_by_cosine() {
+    #[test]
+    fn rank_skills_orders_by_cosine() {
         let s1 = Skill {
             content: "rust borrow checker".into(),
             source: "rust-borrow.md".into(),
@@ -375,37 +380,40 @@ mod tests {
 
     #[tokio::test]
     async fn run_returns_auth_required_when_dep_missing() {
-        let Some((db, emb)) = setup().await else {
+        let Some((client, emb)) = setup().await else {
+            eprintln!("SKIP: embed model or helixdb unavailable");
             return;
         };
 
-        db.upsert_skill(
-            "local::auth-required-rule",
-            Skill {
-                content: "never skip oauth".into(),
-                source: "local::auth-required-rule".into(),
-                embedding: vec![1.0, 0.0, 0.0],
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+        client
+            .upsert_skill(
+                "local::auth-required-rule",
+                Skill {
+                    content: "never skip oauth".into(),
+                    source: "local::auth-required-rule".into(),
+                    embedding: vec![1.0, 0.0, 0.0],
+                    updated_at: now(),
+                },
+            )
+            .await
+            .unwrap();
 
-        db.upsert_auth(
-            "linear_oauth",
-            Auth {
-                auth_type: "oauth".into(),
-                provider: "linear".into(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+        client
+            .upsert_auth(
+                "linear_oauth",
+                Auth {
+                    auth_type: "oauth".into(),
+                    provider: "linear".into(),
+                    updated_at: now(),
+                },
+            )
+            .await
+            .unwrap();
 
         let exec = Arc::new(StubExecutor {
             response: "ok".into(),
         });
-        let action = Action::new(db, emb, exec);
+        let action = Action::new(client, emb, exec);
         let result = action
             .run(Intent {
                 query: "linear oauth rule".into(),
@@ -419,26 +427,28 @@ mod tests {
 
     #[tokio::test]
     async fn run_done_when_executor_succeeds() {
-        let Some((db, emb)) = setup().await else {
+        let Some((client, emb)) = setup().await else {
+            eprintln!("SKIP: embed model or helixdb unavailable");
             return;
         };
 
-        db.upsert_skill(
-            "local::cat-readme",
-            Skill {
-                content: "read the readme".into(),
-                source: "local::cat-readme".into(),
-                embedding: vec![1.0, 0.0, 0.0],
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+        client
+            .upsert_skill(
+                "local::cat-readme",
+                Skill {
+                    content: "read the readme".into(),
+                    source: "local::cat-readme".into(),
+                    embedding: vec![1.0, 0.0, 0.0],
+                    updated_at: now(),
+                },
+            )
+            .await
+            .unwrap();
 
         let exec = Arc::new(StubExecutor {
             response: "42".into(),
         });
-        let action = Action::new(db, emb, exec);
+        let action = Action::new(client, emb, exec);
         let result = action
             .run(Intent {
                 query: "cat the readme".into(),
@@ -455,37 +465,41 @@ mod tests {
 
     #[tokio::test]
     async fn run_stack_filters_skills() {
-        let Some((db, emb)) = setup().await else {
+        let Some((client, emb)) = setup().await else {
+            eprintln!("SKIP: embed model or helixdb unavailable");
             return;
         };
 
-        db.upsert_skill(
-            "nextjs::rule",
-            Skill {
-                content: "next.js rule".into(),
-                source: "nextjs::rule".into(),
-                embedding: vec![1.0, 0.0, 0.0],
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
-        db.upsert_stack(
-            "nextjs",
-            Stack {
-                name: "Next.js".into(),
-            },
-        )
-        .await
-        .unwrap();
-        db.relate_skill_applies_to_stack("nextjs::rule", "nextjs")
+        client
+            .upsert_skill(
+                "nextjs::rule",
+                Skill {
+                    content: "next.js rule".into(),
+                    source: "nextjs::rule".into(),
+                    embedding: vec![1.0, 0.0, 0.0],
+                    updated_at: now(),
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .upsert_stack(
+                "nextjs",
+                Stack {
+                    name: "Next.js".into(),
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .relate_skill_applies_to_stack("nextjs::rule", "nextjs")
             .await
             .unwrap();
 
         let exec = Arc::new(StubExecutor {
             response: "ok".into(),
         });
-        let action = Action::new(db, emb, exec);
+        let action = Action::new(client, emb, exec);
         let result = action
             .run(Intent {
                 query: "next.js".into(),
@@ -518,43 +532,47 @@ mod tests {
 
     #[tokio::test]
     async fn tool_required_missing_surfaces_auth() {
-        let Some((db, emb)) = setup().await else {
+        let Some((client, emb)) = setup().await else {
+            eprintln!("SKIP: embed model or helixdb unavailable");
             return;
         };
 
-        db.upsert_tool(
-            "linear-create",
-            Tool {
-                name: "Linear Create".into(),
-                category: "issue-tracker".into(),
-                local: false,
-                params_schema: serde_json::json!({}),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
-        db.upsert_auth(
-            "linear_oauth",
-            Auth {
-                auth_type: "oauth".into(),
-                provider: "linear".into(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
-        db.relate_tool_requires_auth("linear-create", "linear_oauth")
+        client
+            .upsert_tool(
+                "linear-create",
+                Tool {
+                    name: "Linear Create".into(),
+                    category: "issue-tracker".into(),
+                    local: false,
+                    params_schema: serde_json::json!({}),
+                    updated_at: now(),
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .upsert_auth(
+                "linear_oauth",
+                Auth {
+                    auth_type: "oauth".into(),
+                    provider: "linear".into(),
+                    updated_at: now(),
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .relate_tool_requires_auth("linear-create", "linear_oauth")
             .await
             .unwrap();
 
-        let tools = db.tools_requiring_auth("linear_oauth").await.unwrap();
+        let tools = client.tools_requiring_auth("linear_oauth").await.unwrap();
         assert_eq!(tools.len(), 1);
 
         let exec = Arc::new(StubExecutor {
             response: "ok".into(),
         });
-        let action = Action::new(db.clone(), emb, exec);
+        let action = Action::new(client, emb, exec);
         let result = action
             .run(Intent {
                 query: "create linear issue".into(),

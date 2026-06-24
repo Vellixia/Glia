@@ -7,7 +7,7 @@ strict: warnings fail the build.
 
 - **Rust 1.89+** (`rustup default stable`).
 - **C/C++ toolchain** (Linux/macOS) — needed by `rocksdb` transitively
-  pulled in by `surrealdb`. Windows users with MSVC are fine.
+  pulled in by `HelixDB`. Windows users with MSVC are fine.
 - **Docker** (optional) — for the self-host stack.
 - **OpenSSL headers** (Linux) — `apt install libssl-dev`.
 

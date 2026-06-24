@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "LLM synthesis for Glia — OpenAI-compatible endpoint, ≤150 tokens, graph edge weight priority"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

@@ -245,21 +245,26 @@ pub async fn install_hooks(repo_root: &Path) -> Result<(Vec<String>, bool), Init
         let stacks = scan_repo(repo_root).await?;
         stacks.into_iter().map(|s| s.id).collect()
     };
-    let db_path = repo_root.join(".glia").join("local.db");
-    let skills: Vec<glia_db::Skill> = if db_path.exists() {
-        match glia_db::GliaDb::connect(glia_db::Connection::Embedded(db_path.clone())).await {
-            Ok(db) => match db.list_skills().await {
+    // v0.2.0: CLI has no local DB; pull skill list from the Hub. Falls
+    // back to empty if the Hub is unreachable — hooks are still emitted
+    // (Cursor rules + Claude hooks) without skill citations.
+    let hub_url =
+        std::env::var("GLIA_HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:6969".to_string());
+    let hub_token = std::env::var("GLIA_HUB_TOKEN").ok();
+    let skills: Vec<glia_helix::Skill> =
+        match glia_helix::HelixClient::connect(Some(&hub_url), hub_token.as_deref()) {
+            Ok(client) => match client.list_skills().await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!(error = %e, "skill list failed; hooks for empty set");
+                    tracing::warn!(error = %e, "hub skill list failed; hooks for empty set");
                     Vec::new()
                 }
             },
-            Err(_) => Vec::new(),
-        }
-    } else {
-        Vec::new()
-    };
+            Err(e) => {
+                tracing::warn!(error = %e, "hub unreachable; hooks for empty set");
+                Vec::new()
+            }
+        };
     match glia_hooks::generate_cursor_rules(repo_root, &skills, &stack_names).await {
         Ok(paths) => written.extend(paths),
         Err(e) => tracing::warn!(error = %e, "cursor rules failed"),
@@ -436,22 +441,9 @@ mod tests {
         tokio::fs::create_dir_all(dir.join(".git/hooks"))
             .await
             .unwrap();
-        let db_path = dir.join(".glia/local.db");
-        tokio::fs::create_dir_all(db_path.parent().unwrap())
-            .await
-            .unwrap();
-        let db = glia_db::GliaDb::connect(glia_db::Connection::Embedded(db_path))
-            .await
-            .unwrap();
-        db.init_schema().await.unwrap();
-        let skill = glia_db::Skill {
-            content: "# Use Zustand\n".into(),
-            source: "local::use-zustand.md".into(),
-            embedding: vec![0.0; 384],
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        };
-        db.upsert_skill("local::use-zustand", skill).await.unwrap();
-        drop(db);
+        // v0.2.0: skill list now comes from the Hub. Test falls back to
+        // empty skills if the Hub is unreachable — hooks are still
+        // written, just without skill citations.
         let (written, _) = install_hooks(&dir).await.unwrap();
         assert!(written.iter().any(|p| p.contains(".cursor")));
         let _ = tokio::fs::remove_dir_all(&dir).await;

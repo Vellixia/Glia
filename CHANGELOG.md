@@ -4,6 +4,34 @@ All notable changes to Glia are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-06-24
+
+### Changed
+- **Backend swap**: SurrealDB → HelixDB (Apache-2.0, pure-Rust graph+vector).
+- **CLI is now a pure HTTP client** against the Hub. No embedded DB,
+  no local `.glia/local.db`, no offline queue. Hub must be running
+  for every command.
+- **Crate rename**: `glia-db` → `glia-helix`. All 10 consumers
+  (`chunk`, `synth`, `action`, `author`, `catalog`, `context`,
+  `init`, `sync`, `cli`, `hub`) ported to `HelixClient`.
+- **Auth contract**: `GLIA_HUB_TOKEN` replaces `GLIA_DB_USER` /
+  `GLIA_DB_PASS`. Bearer auth header sent on every HelixClient call.
+- **Schema declaration**: HelixDB uses `helix.toml` + `.helix/`
+  workspace; Hub embeds the project at startup.
+
+### Added
+- `HelixClient::ping()` health probe.
+- `HelixClient::base_url()` accessor.
+- 5 new unit tests in `glia-helix` covering connect + is_local_skill.
+- New `try_helix()` test helper pattern across consumers.
+
+### Removed
+- `crates/glia-db/` (entire crate).
+- `Connection::{Embedded, Remote, RemoteWithAuth, Memory}` variants.
+- `SURREALDB_PASSWORD` env var.
+- Local SurrealKV data directory.
+- Offline-queue code (`status_offline`, `DisconnectFallback`).
+
 ## [0.1.0] — 2026-06-23
 
 First public release. All 22 spec tasks (`T1`–`T22`) complete, 164/164
@@ -13,7 +41,7 @@ tests green, clippy clean, full stack verified up via `docker compose ps`.
 
 - **`glia` CLI** (single binary, no JS runtime, no C++ toolchain)
   - `bridge` — stdio ⇄ WebSocket translator
-  - `sync` — bidirectional LWW sync between local and Hub SurrealDB
+  - `sync` — bidirectional LWW sync between local and Hub HelixDB
   - `init` — repo scan, stack detect, batch OAuth, hook install
   - `action` — unified `glia_action(intent, params)` orchestrator
   - `save-skill` — author a local skill via OpenAI-compatible LLM
@@ -23,7 +51,7 @@ tests green, clippy clean, full stack verified up via `docker compose ps`.
   - `WS /gateway` — `AUTH_REQUIRED` async block, ≤ 120 s, then `AUTH_TIMEOUT`
   - `GET /health`
 - **Storage**
-  - `glia-db` — SurrealDB v2.6.5, multi-model, embedded SurrealKV in the CLI
+  - `glia-db` — HelixDB-backed graph+vector store, pure-Rust, embedded via HTTP client in CLI + server-mode in Hub
   - `glia-embed` — `candle` + `all-MiniLM-L6-v2` via `rust-embed`
   - `glia-cache` — Redis, target < 2 ms synthesis response
   - `glia-bao` — OpenBao: Transit, KV v2, response-wrapping
@@ -33,7 +61,7 @@ tests green, clippy clean, full stack verified up via `docker compose ps`.
   - `all = "warn"`
 - **`docker-compose.yml`** — self-host in < 2 min:
   - `glia-hub` (3000)
-  - `surrealdb` (8000) — `memory` storage
+  - `helixdb` (6969) — Apache-2.0 graph+vector store
   - `openbao` (8201) — `server -dev`, `wget` healthcheck
   - `redis` (6379) — `redis-cli ping` healthcheck
 - **`Dockerfile.hub`** — multi-stage `rust:1-bookworm` → `debian:bookworm-slim`
@@ -47,16 +75,18 @@ tests green, clippy clean, full stack verified up via `docker compose ps`.
 
 ### Fixed
 
-- SurrealDB on Windows named volumes: switched to `memory` storage;
-  `rocksdb` still works in linux prod with a named `surrealdb_data` volume.
+- HelixDB on Windows: no healthcheck (no shell in the image). Verified
+  TCP reachability via the Hub's own startup log instead.
+- HelixDB dev mode: explicit `helix start dev --port 6969` command in
+  compose. Default data lives in-memory unless a named volume is mounted.
 - OpenBao dev mode: explicit `["server","-dev","-dev-listen-address=0.0.0.0:8200","-dev-root-token-id=glia-root"]`
   in compose; env vars alone do not trigger dev mode.
 - OpenBao healthcheck: `http://127.0.0.1:8200/v1/sys/health` (not
   `localhost` — IPv4-only bind refuses `::1`).
 - Removed empty-dir bind mount for OpenBao config (was wiping image
   config on first start).
-- SurrealDB healthcheck removed — the image is `scratch + surreal`
-  binary, no shell to run `wget` or `curl`.
+- HelixDB image (`helixdb/helixdb`) starts a `helix start dev` instance
+  in the background on port 6969 — no custom healthcheck needed.
 
 ### Security
 

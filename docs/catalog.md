@@ -3,7 +3,7 @@
 Skills come from markdown, versioned in a sibling GitHub repo
 [`Vellixia/community-catalog`](https://github.com/Vellixia/community-catalog).
 The CLI pulls them on `glia use <name>`, runs them in a private sandbox,
-and registers them as `community::<name>` in SurrealDB.
+and registers them as `community::<name>` in HelixDB.
 
 They **never run on the Hub**.
 
@@ -71,8 +71,8 @@ flowchart LR
     A[Author] -->|PR| C[community-catalog]
     C -->|glia use| CLI
     CLI -->|sandbox| SAND[glia-sandbox]
-    SAND -->|register| LDB[("local SurrealKV<br/>community::linear")]
-    LDB -->|glia sync| HUB[Hub SurrealDB]
+    SAND -->|register| LDB[("local HelixDB<br/>community::linear")]
+    LDB -->|glia sync| HUB[Hub HelixDB]
 ```
 
 1. Author opens a PR to the catalog repo.

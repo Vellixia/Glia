@@ -21,8 +21,8 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use glia_action::{Action, Executor, Intent};
-use glia_db::GliaDb;
 use glia_embed::Embedder;
+use glia_helix::HelixClient;
 use glia_synth::{SynthOrchestrator, Synthesizer};
 
 /// Errors from context loading.
@@ -99,7 +99,7 @@ impl StackDetector for DefaultStackDetector {
 
 /// Proactive context loader.
 pub struct ContextLoader {
-    db: Arc<GliaDb>,
+    db: HelixClient,
     embedder: Arc<Embedder>,
     synth: Arc<SynthOrchestrator>,
     detector: Arc<dyn StackDetector>,
@@ -110,7 +110,7 @@ pub struct ContextLoader {
 impl ContextLoader {
     /// Build a new context loader.
     pub fn new(
-        db: Arc<GliaDb>,
+        db: HelixClient,
         embedder: Arc<Embedder>,
         synth: Arc<dyn Synthesizer>,
         detector: Arc<dyn StackDetector>,
@@ -223,7 +223,7 @@ struct NoopExecutor;
 impl Executor for NoopExecutor {
     async fn exec(
         &self,
-        _tool: &glia_db::Tool,
+        _tool: &glia_helix::Tool,
         _params: &serde_json::Value,
     ) -> Result<String, String> {
         Ok(String::new())
@@ -300,25 +300,22 @@ impl ContextWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::{Connection, Skill, Stack};
+    use glia_helix::{Skill, Stack};
     use glia_synth::StubSynthesizer;
 
-    async fn setup() -> Option<(Arc<GliaDb>, Arc<Embedder>, Arc<dyn Synthesizer>)> {
-        let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
+    async fn setup() -> Option<(HelixClient, Arc<Embedder>, Arc<dyn Synthesizer>)> {
         let emb = Arc::new(Embedder::try_new()?);
+        let client = HelixClient::connect(None, None).ok()?;
+        if client.ping().await.is_err() {
+            return None;
+        }
         let synth: Arc<dyn Synthesizer> = Arc::new(StubSynthesizer::default());
-        Some((db, emb, synth))
+        Some((client, emb, synth))
     }
 
-    async fn seed_skill(db: &GliaDb, id: &str, content: &str, stack: &str) {
-        let vector = db; // suppress unused
-        let _ = vector;
+    async fn seed_skill(db: &HelixClient, id: &str, content: &str, stack: &str) {
         let now = "2026-01-01T00:00:00Z";
         let Some(emb) = Embedder::try_new() else {
-            // No model available (CI w/o assets) — skip seeding; the
-            // surrounding tests that depend on a populated DB will
-            // already have early-returned in their `setup()`.
             return;
         };
         let v = emb.embed(content).unwrap();
@@ -448,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn noop_executor_returns_empty() {
         let e = NoopExecutor;
-        let tool = glia_db::Tool {
+        let tool = glia_helix::Tool {
             name: "test".into(),
             category: "test".into(),
             local: true,

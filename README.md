@@ -33,7 +33,7 @@ glia action --intent "create a Linear issue for the login bug"
 ## Features
 
 - **One tool, every intent** — intent → tool → credentials → exec → synthesis.
-- **Local-first, zero-trust** — embedded SurrealDB, OpenBao for secrets,
+- **Local-first, zero-trust** — embedded HelixDB, OpenBao for secrets,
   response-wrapping so the Hub never sees plaintext. Offline? CLI keeps
   working from local state.
 - **Air-gappable** — `candle` embeddings, model bundled via `rust-embed`,
@@ -56,7 +56,7 @@ docker compose ps
 | Service    | Port | Healthcheck |
 |------------|------|-------------|
 | `glia-hub` | 3000 | up immediately |
-| SurrealDB  | 8000 | — |
+| HelixDB  | 8000 | — |
 | OpenBao    | 8201 | `wget /v1/sys/health` |
 | Redis      | 6379 | `redis-cli ping` |
 

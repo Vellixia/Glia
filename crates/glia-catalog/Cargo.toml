@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "`glia use <community-tool>` catalog pull + private sandbox exec (T20, V12/C9)"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

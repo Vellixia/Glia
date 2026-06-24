@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "Unified glia_action endpoint — discover+exec+dep-check, intent classification, parallel orchestration"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

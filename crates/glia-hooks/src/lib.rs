@@ -99,7 +99,11 @@ impl ClaudeSettings {
 }
 
 /// Build a Cursor rule from a skill.
-pub fn skill_to_cursor_rule(skill: &glia_db::Skill, name: &str, globs: Vec<String>) -> CursorRule {
+pub fn skill_to_cursor_rule(
+    skill: &glia_helix::Skill,
+    name: &str,
+    globs: Vec<String>,
+) -> CursorRule {
     let description = format!("Glia skill: {}", name);
     let body = format!("# {}\n\n{}", name, skill.content);
     CursorRule {
@@ -130,7 +134,7 @@ pub fn build_claude_hook(matcher: &str, stacks: &[String]) -> ClaudeHookEntry {
 /// `<repo>/.cursor/rules/`.
 pub async fn generate_cursor_rules(
     repo_root: &Path,
-    skills: &[glia_db::Skill],
+    skills: &[glia_helix::Skill],
     stacks: &[String],
 ) -> Result<Vec<String>, HookError> {
     let rules_dir = repo_root.join(".cursor").join("rules");
@@ -143,6 +147,17 @@ pub async fn generate_cursor_rules(
         let path = rules_dir.join(format!("{}.mdc", name));
         tokio::fs::write(&path, rule.render()).await?;
         written.push(path.to_string_lossy().into_owned());
+    }
+    if written.is_empty() {
+        // No skills yet — write a placeholder so `glia init` always
+        // produces a recognizable `.cursor/rules/` directory.
+        let readme = rules_dir.join("README.md");
+        tokio::fs::write(
+            &readme,
+            "# Glia Cursor Rules\n\nNo local skills yet. Run `glia save-skill` or `glia chunk ingest` to populate.\n",
+        )
+        .await?;
+        written.push(readme.to_string_lossy().into_owned());
     }
     Ok(written)
 }
@@ -204,8 +219,8 @@ fn stack_globs(stacks: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn skill(source: &str, content: &str) -> glia_db::Skill {
-        glia_db::Skill {
+    fn skill(source: &str, content: &str) -> glia_helix::Skill {
+        glia_helix::Skill {
             source: source.into(),
             content: content.into(),
             embedding: vec![],

@@ -1,20 +1,25 @@
-# Glia — docker-compose for Hub + SurrealDB server + OpenBao + Redis.
-# T18: V16, C7. SurrealDB uses `memory` storage (rocksdb on Windows docker
-# named volume triggers "There was a problem with the database"; switch to
-# `rocksdb:/data/surreal.db` + named `surrealdb_data` volume in linux prod).
+# Glia — docker-compose for Hub + HelixDB + OpenBao + Redis.
+# v0.2.0: SurrealDB replaced with HelixDB (graph+vector, Apache-2.0).
+# HelixDB instance runs as a separate container; Hub talks to it via
+# HTTP on `localhost:6969`.
 
 services:
-  surrealdb:
-    image: surrealdb/surrealdb:v2.6.5
-    command: ["start", "--user", "root", "--pass", "${SURREALDB_PASSWORD:-glia}", "memory", "--bind", "0.0.0.0:8000"]
+  helixdb:
+    # The HelixDB dev instance is managed by the `helix` CLI (the OSS v2
+    # CLI pulls `ghcr.io/helixdb/enterprise-dev:latest` + a MinIO container
+    # and wires them together). To start a local dev instance manually:
+    #   helix init local         # in a scratch dir (creates .helix/, helix.toml)
+    #   helix start --port 6969 --foreground
+    #
+    # v0.2.0 compose ships the OSS HelixDB gateway via the CLI; the Hub
+    # container depends on the dev instance being reachable at
+    # `http://helixdb:6969`. Glia schema (HelixQL `#[register]` queries) is
+    # loaded by the Hub at startup once T23.1 lands.
+    image: ghcr.io/helixdb/enterprise-dev:latest
+    command: ["helix", "start", "dev", "--port", "6969", "--bind", "0.0.0.0:6969"]
     ports:
-      - "8000:8000"
-    environment:
-      SURREALDB_NAMESPACE: glia
-      SURREALDB_DATABASE: glia
+      - "6969:6969"
     restart: unless-stopped
-    # No healthcheck — image is scratch + surreal binary, no curl/wget.
-    # Hub uses condition: service_started + a short sleep below.
 
   openbao:
     image: openbao/openbao:2.2
@@ -53,8 +58,8 @@ services:
       context: .
       dockerfile: Dockerfile.hub
     depends_on:
-      surrealdb:
-        condition: service_started
+      helixdb:
+        condition: service_healthy
       openbao:
         condition: service_healthy
       redis:
@@ -62,11 +67,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GLIA_DB_REMOTE: "ws://surrealdb:8000"
-      GLIA_DB_NS: glia
-      GLIA_DB_DB: glia
-      GLIA_DB_USER: root
-      GLIA_DB_PASS: "${SURREALDB_PASSWORD:-glia}"
+      GLIA_HELIX_URL: "http://helixdb:6969"
+      GLIA_HELIX_TOKEN: "${HELIXDB_TOKEN:-}"
       GLIA_OPENBAO_URL: "http://openbao:8200"
       GLIA_OPENBAO_TOKEN: "${OPENBAO_ROOT_TOKEN:-glia-root}"
       GLIA_REDIS_URL: "redis://redis:6379/0"

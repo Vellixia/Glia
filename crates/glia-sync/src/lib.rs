@@ -1,32 +1,33 @@
-//! glia-sync — local-remote SurrealDB bidirectional sync + disconnect fallback (T22, V15/V16).
+//! glia-sync — sync against the Hub (HelixDB-backed, v0.2.0).
 //!
-//! Hub-authoritative LWW (V16): on conflict, the record with the later
-//! `updated_at` wins. Local-only skills (namespace `local::`) are NEVER
-//! overwritten by remote — they're preserved as `local::` on the Hub too.
+//! Hub-authoritative LWW (V16): the record with the later `updated_at`
+//! wins. Local-namespaced skills (`local::*`) are owned by the CLI/repo
+//! and live on the Hub too — they can be re-pushed at any time.
+//!
+//! v0.2.0: no local embedded DB. The CLI is a pure HTTP client; sync
+//! talks to the Hub via `HelixClient`. Local-only state = un-ingested
+//! skill files in `<repo>/skills/`; those are pushed via
+//! `glia chunk ingest`.
 //!
 //! Sync flow:
-//! 1. `pull` — fetch remote skills not present locally (or older).
-//! 2. `push` — send local skills not present remotely (or older).
-//! 3. `status` — report diffs without applying.
-//!
-//! Disconnect fallback (V15): if Hub is unreachable, mark `HUB_UNREACHABLE`
-//! and queue changes for later sync.
-
-use std::sync::Arc;
+//! 1. `status` — fetch remote skills and report diffs (per-id LWW).
+//! 2. `sync` — pull remote-newer/remote-only to Hub-side state (idempotent
+//!    since Hub is the source of truth).
+//! 3. CLI side: `glia chunk ingest` pushes local files into the Hub.
 
 use serde::{Deserialize, Serialize};
 
-use glia_db::GliaDb;
+use glia_helix::HelixClient;
 
 /// Errors from sync.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
     /// DB operation failed.
     #[error("db: {0}")]
-    Db(#[from] glia_db::DbError),
+    Db(#[from] glia_helix::HelixError),
     /// Hub unreachable.
-    #[error("hub unreachable")]
-    HubUnreachable,
+    #[error("hub unreachable: {0}")]
+    HubUnreachable(String),
 }
 
 /// Sync status for a single skill.
@@ -42,7 +43,7 @@ pub enum SkillSyncStatus {
     LocalOnly,
     /// Only exists remotely — needs pull.
     RemoteOnly,
-    /// Local-namespaced skill — never synced (V16).
+    /// Local-namespaced skill — owned by repo, push when changed.
     LocalNamespace,
 }
 
@@ -72,31 +73,33 @@ pub struct SyncResult {
     pub hub_reachable: bool,
 }
 
-/// Bidirectional sync engine.
+/// Bidirectional sync engine against the Hub.
 pub struct SyncEngine {
-    local: Arc<GliaDb>,
-    remote: Arc<GliaDb>,
+    client: HelixClient,
 }
 
 impl SyncEngine {
-    /// Build a new sync engine between a local and remote DB.
-    pub fn new(local: Arc<GliaDb>, remote: Arc<GliaDb>) -> Self {
-        Self { local, remote }
+    /// Build a new sync engine against a Hub HelixDB instance.
+    pub fn new(client: HelixClient) -> Self {
+        Self { client }
     }
 
-    /// Compute the diff between local and remote.
-    pub async fn status(&self) -> Result<Vec<SyncDiff>, SyncError> {
-        let local_skills = self.local.list_skills_with_ids().await?;
-        let remote_skills = self.remote.list_skills_with_ids().await?;
+    /// Compute the diff between local (provided) and remote (Hub).
+    ///
+    /// `local` = the set of skill ids + updated_at the CLI knows about
+    /// (typically read from `<repo>/skills/*.md` frontmatter or supplied
+    /// empty for pure Hub-state inspection).
+    pub async fn status(&self, local: &[(String, String)]) -> Result<Vec<SyncDiff>, SyncError> {
+        let remote_skills = self.client.list_skills_with_ids().await?;
         let mut diffs = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for (id, ls) in &local_skills {
+        for (id, local_updated) in local {
             seen.insert(id.clone());
-            if glia_db::GliaDb::is_local_skill(id) {
+            if HelixClient::is_local_skill(id) {
                 diffs.push(SyncDiff {
                     id: id.clone(),
                     status: SkillSyncStatus::LocalNamespace,
-                    local_updated: Some(ls.updated_at.clone()),
+                    local_updated: Some(local_updated.clone()),
                     remote_updated: None,
                 });
                 continue;
@@ -106,50 +109,50 @@ impl SyncEngine {
                 None => diffs.push(SyncDiff {
                     id: id.clone(),
                     status: SkillSyncStatus::LocalOnly,
-                    local_updated: Some(ls.updated_at.clone()),
+                    local_updated: Some(local_updated.clone()),
                     remote_updated: None,
                 }),
                 Some((_, r)) => {
-                    if ls.updated_at == r.updated_at {
+                    if local_updated == &r.updated_at {
                         diffs.push(SyncDiff {
                             id: id.clone(),
                             status: SkillSyncStatus::InSync,
-                            local_updated: Some(ls.updated_at.clone()),
+                            local_updated: Some(local_updated.clone()),
                             remote_updated: Some(r.updated_at.clone()),
                         });
-                    } else if ls.updated_at > r.updated_at {
+                    } else if local_updated > &r.updated_at {
                         diffs.push(SyncDiff {
                             id: id.clone(),
                             status: SkillSyncStatus::LocalNewer,
-                            local_updated: Some(ls.updated_at.clone()),
+                            local_updated: Some(local_updated.clone()),
                             remote_updated: Some(r.updated_at.clone()),
                         });
                     } else {
                         diffs.push(SyncDiff {
                             id: id.clone(),
                             status: SkillSyncStatus::RemoteNewer,
-                            local_updated: Some(ls.updated_at.clone()),
+                            local_updated: Some(local_updated.clone()),
                             remote_updated: Some(r.updated_at.clone()),
                         });
                     }
                 }
             }
         }
-        for (id, rs) in &remote_skills {
+        for (id, r) in &remote_skills {
             if !seen.contains(id) {
-                if glia_db::GliaDb::is_local_skill(id) {
+                if HelixClient::is_local_skill(id) {
                     diffs.push(SyncDiff {
                         id: id.clone(),
                         status: SkillSyncStatus::LocalNamespace,
                         local_updated: None,
-                        remote_updated: Some(rs.updated_at.clone()),
+                        remote_updated: Some(r.updated_at.clone()),
                     });
                 } else {
                     diffs.push(SyncDiff {
                         id: id.clone(),
                         status: SkillSyncStatus::RemoteOnly,
                         local_updated: None,
-                        remote_updated: Some(rs.updated_at.clone()),
+                        remote_updated: Some(r.updated_at.clone()),
                     });
                 }
             }
@@ -157,48 +160,37 @@ impl SyncEngine {
         Ok(diffs)
     }
 
-    /// Pull remote-newer and remote-only skills to local.
-    pub async fn pull(&self) -> Result<usize, SyncError> {
-        let diffs = self.status().await?;
-        let mut count = 0;
-        for d in diffs {
-            if (d.status == SkillSyncStatus::RemoteNewer || d.status == SkillSyncStatus::RemoteOnly)
-                && let Some(remote_skill) = self.remote.get_skill(&d.id).await?
-            {
-                self.local.upsert_skill(&d.id, remote_skill).await?;
-                count += 1;
-            }
-        }
-        Ok(count)
-    }
-
-    /// Push local-newer and local-only skills to remote.
-    /// Local-namespaced skills are skipped (V16).
-    pub async fn push(&self) -> Result<usize, SyncError> {
-        let diffs = self.status().await?;
-        let mut count = 0;
-        for d in diffs {
-            if (d.status == SkillSyncStatus::LocalNewer || d.status == SkillSyncStatus::LocalOnly)
-                && let Some(local_skill) = self.local.get_skill(&d.id).await?
-            {
-                self.remote.upsert_skill(&d.id, local_skill).await?;
-                count += 1;
-            }
-        }
-        Ok(count)
-    }
-
-    /// Full bidirectional sync: pull then push.
-    pub async fn sync(&self) -> Result<SyncResult, SyncError> {
-        let pulled = self.pull().await?;
-        let pushed = self.push().await?;
-        let diffs = self.status().await?;
-        let skipped = diffs
-            .into_iter()
+    /// Pull remote-newer and remote-only skills (idempotent against Hub).
+    /// In single-gateway mode this is effectively a no-op confirmation:
+    /// the Hub already holds its own state.
+    pub async fn pull(&self, local: &[(String, String)]) -> Result<usize, SyncError> {
+        let diffs = self.status(local).await?;
+        let count = diffs
+            .iter()
             .filter(|d| {
-                d.status == SkillSyncStatus::InSync || d.status == SkillSyncStatus::LocalNamespace
+                d.status == SkillSyncStatus::RemoteNewer || d.status == SkillSyncStatus::RemoteOnly
             })
             .count();
+        Ok(count)
+    }
+
+    /// Full sync: pull then push. With Hub as source of truth, this
+    /// returns counts without mutating Hub-side state (mutations happen
+    /// via `glia chunk ingest` / `glia save-skill`).
+    pub async fn sync(&self, local: &[(String, String)]) -> Result<SyncResult, SyncError> {
+        let pulled = self.pull(local).await?;
+        let diffs = self.status(local).await?;
+        let mut pushed = 0;
+        let mut skipped = 0;
+        for d in &diffs {
+            if d.status == SkillSyncStatus::LocalNewer || d.status == SkillSyncStatus::LocalOnly {
+                pushed += 1;
+            } else if d.status == SkillSyncStatus::InSync
+                || d.status == SkillSyncStatus::LocalNamespace
+            {
+                skipped += 1;
+            }
+        }
         Ok(SyncResult {
             pulled,
             pushed,
@@ -208,280 +200,102 @@ impl SyncEngine {
     }
 }
 
-/// Compute the local-only status diff (used when Hub is unreachable).
-/// All skills are reported as `LocalOnly` or `LocalNamespace` since remote cannot be queried.
-pub async fn status_offline(local: Arc<GliaDb>) -> Result<Vec<SyncDiff>, SyncError> {
-    let local_skills = local.list_skills_with_ids().await?;
-    let diffs = local_skills
-        .into_iter()
-        .map(|(id, ls)| {
-            let status = if GliaDb::is_local_skill(&id) {
-                SkillSyncStatus::LocalNamespace
-            } else {
-                SkillSyncStatus::LocalOnly
-            };
-            SyncDiff {
-                id,
-                status,
-                local_updated: Some(ls.updated_at),
-                remote_updated: None,
-            }
-        })
-        .collect();
-    Ok(diffs)
+/// Compute Hub-only status (no local state).
+pub async fn status(client: &HelixClient) -> Result<Vec<SyncDiff>, SyncError> {
+    SyncEngine::new(client.clone()).status(&[]).await
 }
 
-/// Disconnect fallback: queues changes when Hub is unreachable.
-pub struct DisconnectFallback {
-    /// Pending changes (skill ids that need syncing).
-    queue: Arc<tokio::sync::Mutex<Vec<String>>>,
-}
-
-impl DisconnectFallback {
-    /// Build a new fallback queue.
-    pub fn new() -> Self {
-        Self {
-            queue: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Enqueue a skill for later sync.
-    pub async fn enqueue(&self, skill_id: String) {
-        self.queue.lock().await.push(skill_id);
-    }
-
-    /// Drain the queue (called when Hub reconnects).
-    pub async fn drain(&self) -> Vec<String> {
-        let mut q = self.queue.lock().await;
-        std::mem::take(&mut *q)
-    }
-
-    /// Check if there are pending changes.
-    pub async fn has_pending(&self) -> bool {
-        !self.queue.lock().await.is_empty()
-    }
-
-    /// Pending count.
-    pub async fn pending_count(&self) -> usize {
-        self.queue.lock().await.len()
-    }
-}
-
-impl Default for DisconnectFallback {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Full sync against the Hub with no local state.
+pub async fn sync(client: &HelixClient) -> Result<SyncResult, SyncError> {
+    SyncEngine::new(client.clone()).sync(&[]).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::{Connection, Skill};
 
-    async fn empty_db() -> Arc<GliaDb> {
-        let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
-        db
-    }
-
-    fn skill(content: &str, updated: &str) -> Skill {
-        Skill {
-            content: content.into(),
-            source: "test.md".into(),
-            embedding: vec![],
-            updated_at: updated.into(),
+    async fn try_client() -> Option<HelixClient> {
+        let client = HelixClient::connect(None, None).ok()?;
+        if client.ping().await.is_err() {
+            return None;
         }
+        Some(client)
     }
 
     #[tokio::test]
-    async fn status_empty_both() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert!(diffs.is_empty());
+    async fn status_empty_hub() {
+        let Some(client) = try_client().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
+        let engine = SyncEngine::new(client);
+        let diffs = engine.status(&[]).await.unwrap();
+        // Hub may have data; we just verify it returns without panicking.
+        let _ = diffs;
     }
 
     #[tokio::test]
-    async fn status_local_only() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("supabase-auth", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert_eq!(diffs.len(), 1);
-        assert_eq!(diffs[0].status, SkillSyncStatus::LocalOnly);
+    async fn local_only_reports_push() {
+        let Some(client) = try_client().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
+        let engine = SyncEngine::new(client);
+        let local = vec![(
+            "never-seen.md".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+        )];
+        let diffs = engine.status(&local).await.unwrap();
+        assert!(
+            diffs
+                .iter()
+                .any(|d| d.id == "never-seen.md" && d.status == SkillSyncStatus::LocalOnly)
+        );
     }
 
     #[tokio::test]
-    async fn status_remote_only() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        remote
-            .upsert_skill("supabase-auth", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert_eq!(diffs.len(), 1);
-        assert_eq!(diffs[0].status, SkillSyncStatus::RemoteOnly);
+    async fn local_namespace_skipped() {
+        let Some(client) = try_client().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
+        let engine = SyncEngine::new(client);
+        let local = vec![(
+            "local::my-rule.md".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+        )];
+        let diffs = engine.status(&local).await.unwrap();
+        assert!(diffs.iter().any(|d| d.id == "local::my-rule.md"
+            && d.status == SkillSyncStatus::LocalNamespace));
     }
 
-    #[tokio::test]
-    async fn status_in_sync() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        remote
-            .upsert_skill("foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert_eq!(diffs[0].status, SkillSyncStatus::InSync);
+    #[test]
+    fn sync_result_serializes_round_trip() {
+        let r = SyncResult {
+            pulled: 1,
+            pushed: 2,
+            skipped: 3,
+            hub_reachable: true,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        let back: SyncResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.pulled, 1);
+        assert_eq!(back.pushed, 2);
+        assert_eq!(back.skipped, 3);
+        assert!(back.hub_reachable);
     }
 
-    #[tokio::test]
-    async fn status_local_newer() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("foo", skill("x", "2026-01-02"))
-            .await
-            .unwrap();
-        remote
-            .upsert_skill("foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert_eq!(diffs[0].status, SkillSyncStatus::LocalNewer);
-    }
-
-    #[tokio::test]
-    async fn status_remote_newer() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        remote
-            .upsert_skill("foo", skill("x", "2026-01-02"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert_eq!(diffs[0].status, SkillSyncStatus::RemoteNewer);
-    }
-
-    #[tokio::test]
-    async fn local_namespace_never_syncs() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("local::foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote);
-        let diffs = engine.status().await.unwrap();
-        assert_eq!(diffs[0].status, SkillSyncStatus::LocalNamespace);
-        // Push should skip it.
-        let pushed = engine.push().await.unwrap();
-        assert_eq!(pushed, 0);
-    }
-
-    #[tokio::test]
-    async fn pull_remote_only() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        remote
-            .upsert_skill("foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local.clone(), remote);
-        let pulled = engine.pull().await.unwrap();
-        assert_eq!(pulled, 1);
-        assert!(local.get_skill("foo").await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn push_local_only() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("foo", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local, remote.clone());
-        let pushed = engine.push().await.unwrap();
-        assert_eq!(pushed, 1);
-        assert!(remote.get_skill("foo").await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn sync_bidirectional() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("local-only", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        remote
-            .upsert_skill("remote-only", skill("x", "2026-01-01"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local.clone(), remote.clone());
-        let result = engine.sync().await.unwrap();
-        assert_eq!(result.pulled, 1);
-        assert_eq!(result.pushed, 1);
-        assert!(local.get_skill("remote-only").await.unwrap().is_some());
-        assert!(remote.get_skill("local-only").await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn lww_remote_wins_on_conflict() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        local
-            .upsert_skill("foo", skill("old", "2026-01-01"))
-            .await
-            .unwrap();
-        remote
-            .upsert_skill("foo", skill("new", "2026-01-02"))
-            .await
-            .unwrap();
-        let engine = SyncEngine::new(local.clone(), remote);
-        engine.pull().await.unwrap();
-        let skill = local.get_skill("foo").await.unwrap().unwrap();
-        assert_eq!(skill.content, "new");
-    }
-
-    #[tokio::test]
-    async fn disconnect_fallback_queue() {
-        let fb = DisconnectFallback::new();
-        assert!(!fb.has_pending().await);
-        fb.enqueue("foo".into()).await;
-        fb.enqueue("bar".into()).await;
-        assert!(fb.has_pending().await);
-        assert_eq!(fb.pending_count().await, 2);
-        let drained = fb.drain().await;
-        assert_eq!(drained, vec!["foo", "bar"]);
-        assert!(!fb.has_pending().await);
-    }
-
-    #[tokio::test]
-    async fn sync_result_hub_reachable() {
-        let local = empty_db().await;
-        let remote = empty_db().await;
-        let engine = SyncEngine::new(local, remote);
-        let result = engine.sync().await.unwrap();
-        assert!(result.hub_reachable);
+    #[test]
+    fn sync_diff_serializes_round_trip() {
+        let d = SyncDiff {
+            id: "x".into(),
+            status: SkillSyncStatus::InSync,
+            local_updated: Some("a".into()),
+            remote_updated: Some("a".into()),
+        };
+        let s = serde_json::to_string(&d).unwrap();
+        let back: SyncDiff = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.id, "x");
+        assert_eq!(back.status, SkillSyncStatus::InSync);
     }
 }

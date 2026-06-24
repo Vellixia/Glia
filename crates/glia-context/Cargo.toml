@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "Proactive context loading: file-open → background glia_action (T17, V10)"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
 glia-action = { path = "../glia-action" }
 glia-synth = { path = "../glia-synth" }

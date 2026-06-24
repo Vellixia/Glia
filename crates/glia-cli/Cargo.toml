@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 glia-bridge = { path = "../glia-bridge" }
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-sync = { path = "../glia-sync" }
 glia-init = { path = "../glia-init" }
 glia-action = { path = "../glia-action" }

@@ -1,12 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/glia-cli", "crates/glia-bridge", "crates/glia-fs", "crates/glia-bash", "crates/glia-hub", "crates/glia-sandbox", "crates/glia-db", "crates/glia-embed", "crates/glia-action", "crates/glia-chunk", "crates/glia-synth", "crates/glia-cache", "crates/glia-author", "crates/glia-bao", "crates/glia-auth", "crates/glia-hooks", "crates/glia-context", "crates/glia-init", "crates/glia-catalog", "crates/glia-sync"]
+members = ["crates/glia-cli", "crates/glia-bridge", "crates/glia-fs", "crates/glia-bash", "crates/glia-hub", "crates/glia-sandbox", "crates/glia-helix", "crates/glia-embed", "crates/glia-action", "crates/glia-chunk", "crates/glia-synth", "crates/glia-cache", "crates/glia-author", "crates/glia-bao", "crates/glia-auth", "crates/glia-hooks", "crates/glia-context", "crates/glia-init", "crates/glia-catalog", "crates/glia-sync"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.89"
+
+[workspace.dependencies]
+helix-db = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

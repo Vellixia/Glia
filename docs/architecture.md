@@ -12,12 +12,12 @@ flowchart TB
     end
 
     subgraph Local["Local (semi-trusted)"]
-        CLI["glia CLI<br/>embedded SurrealKV<br/>candle embeddings<br/>local skills"]
+        CLI["glia CLI<br/>embedded HelixDB<br/>candle embeddings<br/>local skills"]
     end
 
     subgraph Hub["Hub (trusted)"]
         GATE["WS /gateway<br/>glia_action engine"]
-        SDB[("SurrealDB<br/>server-mode")]
+        SDB[("HelixDB<br/>server-mode")]
         BAO["OpenBao<br/>response-wrapping"]
         SAND["Sandbox<br/>seccomp / sandbox-exec"]
         CACHE["Redis<br/>synthesis cache"]
@@ -28,7 +28,7 @@ flowchart TB
     end
 
     MCP <-->|"WS<br/>intent / result"| CLI
-    CLI -->|"local: SurrealKV"| SDB
+    CLI -->|"local: HelixDB"| SDB
     CLI <-->|"WS /gateway"| GATE
     GATE --> SDB
     GATE --> BAO
@@ -51,8 +51,8 @@ tool: glia_action(intent:string, params:object)
 | Tier | Component | Role |
 |------|-----------|------|
 | Agent | MCP client | Calls `glia_action`. Sees no secrets. |
-| Local | `glia` CLI | Embedded SurrealKV, candle embeddings, local skills. |
-| Hub | `glia-hub` | SurrealDB server, OpenBao, Redis, sandbox dispatcher. |
+| Local | `glia` CLI | Embedded HelixDB, candle embeddings, local skills. |
+| Hub | `glia-hub` | HelixDB server, OpenBao, Redis, sandbox dispatcher. |
 | Catalog | `community-catalog` (GitHub) | Pulled into private sandbox, never trusted. |
 
 ## Data flow: a single action
@@ -66,7 +66,7 @@ sequenceDiagram
     participant S as Sandbox
 
     A->>C: glia_action(intent, params)
-    C->>C: match locally (SurrealKV + candle)
+    C->>C: match locally (HelixDB + candle)
     alt local match
         C-->>A: result
     else remote
@@ -105,8 +105,8 @@ Three rules govern secrets end to end:
 
 | Store | Backend | Holds |
 |-------|---------|-------|
-| Local DB | SurrealKV (embedded) | Skills, tools, stacks, edges |
-| Hub DB | SurrealDB (server, in-memory for dev) | Same schema, Hub-authoritative |
+| Local DB | HelixDB (embedded) | Skills, tools, stacks, edges |
+| Hub DB | HelixDB (server, in-memory for dev) | Same schema, Hub-authoritative |
 | Cache | Redis | Synthesis responses (≤2 ms hot path) |
 | Secrets | OpenBao | Refresh + access tokens, DB creds |
 | Catalog | GitHub | Markdown skills, versioned |

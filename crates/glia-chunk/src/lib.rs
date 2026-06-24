@@ -7,11 +7,14 @@
 //! before persisting. V11: chunks keep a `source` field for citation
 //! (V4). V16: chunks preserve the `local::` namespace prefix.
 //!
+//! v0.2.0: pipeline talks to the Hub via `HelixClient` (HTTP). Each chunk
+//! upserted as a `skill` record with id `{source}::{i}`.
+//!
 //! Pipeline:
 //! 1. `chunker::split` — markdown split on `## ` headings, then by
 //!    paragraph if still over `max_chars`.
 //! 2. `pipeline::ingest` — for each chunk, embed via `glia-embed`,
-//!    upsert as a `skill` record with id `{source}::{i}`.
+//!    upsert via the HelixClient (`POST /v1/upsert_skill`).
 //! 3. `git::install_pre_push` — write `.git/hooks/pre-push` that calls
 //!    `glia chunk ingest --changed` before push.
 
@@ -20,15 +23,15 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
-use glia_db::{GliaDb, Skill};
 use glia_embed::Embedder;
+use glia_helix::{HelixClient, Skill};
 
 /// Errors from chunking / ingestion.
 #[derive(Debug, thiserror::Error)]
 pub enum ChunkError {
     /// DB operation failed.
     #[error("db: {0}")]
-    Db(#[from] Box<glia_db::DbError>),
+    Db(#[from] glia_helix::HelixError),
     /// Embedder failed.
     #[error("embed: {0}")]
     Embed(#[from] glia_embed::EmbedError),
@@ -38,12 +41,6 @@ pub enum ChunkError {
     /// IO error.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-}
-
-impl From<glia_db::DbError> for ChunkError {
-    fn from(e: glia_db::DbError) -> Self {
-        ChunkError::Db(Box::new(e))
-    }
 }
 
 /// A single chunk of a skill document.
@@ -164,16 +161,16 @@ impl Chunker {
 
 /// Ingestion pipeline. Holds shared deps.
 pub struct Pipeline {
-    db: Arc<GliaDb>,
+    client: HelixClient,
     embedder: Arc<Embedder>,
     chunker: Chunker,
 }
 
 impl Pipeline {
     /// Build a pipeline with the default chunker.
-    pub fn new(db: Arc<GliaDb>, embedder: Arc<Embedder>) -> Self {
+    pub fn new(client: HelixClient, embedder: Arc<Embedder>) -> Self {
         Self {
-            db,
+            client,
             embedder,
             chunker: Chunker::default(),
         }
@@ -204,7 +201,7 @@ impl Pipeline {
                 embedding,
                 updated_at: Utc::now().to_rfc3339(),
             };
-            self.db.upsert_skill(&id, skill).await?;
+            self.client.upsert_skill(&id, skill).await?;
             ids.push(id);
         }
         Ok(ids)
@@ -244,15 +241,6 @@ pub mod git {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::{Connection, GliaDb, Stack};
-    use std::sync::Arc;
-
-    async fn setup() -> Option<(Arc<GliaDb>, Arc<Embedder>)> {
-        let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
-        let emb = Arc::new(Embedder::try_new()?);
-        Some((db, emb))
-    }
 
     #[test]
     fn chunker_splits_on_h2() {
@@ -305,19 +293,33 @@ mod tests {
         assert_eq!(c.text(), "Auth\nuse OAuth");
     }
 
+    async fn try_helix() -> Option<HelixClient> {
+        let c = HelixClient::connect(None, None).ok()?;
+        if c.ping().await.is_ok() {
+            Some(c)
+        } else {
+            None
+        }
+    }
+
     #[tokio::test]
     async fn ingest_persists_chunks_with_embedding() {
-        let Some((db, emb)) = setup().await else {
+        let Some(emb) = Embedder::try_new().map(Arc::new) else {
+            eprintln!("SKIP: embed model assets missing");
             return;
         };
-        let pipe = Pipeline::new(db.clone(), emb);
+        let Some(client) = try_helix().await else {
+            eprintln!("SKIP: no helixdb at http://127.0.0.1:6969");
+            return;
+        };
+        let pipe = Pipeline::new(client.clone(), emb);
         let md = "## Auth\nNever use service_role.\n## Storage\nEnable RLS.\n";
         let ids = pipe.ingest("supabase-auth.md", md).await.unwrap();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids[0], "supabase-auth.md::0");
         assert_eq!(ids[1], "supabase-auth.md::1");
 
-        let got = db.get_skill("supabase-auth.md::0").await.unwrap();
+        let got = client.get_skill("supabase-auth.md::0").await.unwrap();
         assert!(got.is_some());
         let s = got.unwrap();
         assert_eq!(s.embedding.len(), 384);
@@ -325,10 +327,15 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_preserves_local_namespace() {
-        let Some((db, emb)) = setup().await else {
+        let Some(emb) = Embedder::try_new().map(Arc::new) else {
+            eprintln!("SKIP: embed model assets missing");
             return;
         };
-        let pipe = Pipeline::new(db, emb);
+        let Some(client) = try_helix().await else {
+            eprintln!("SKIP: no helixdb at http://127.0.0.1:6969");
+            return;
+        };
+        let pipe = Pipeline::new(client, emb);
         let ids = pipe
             .ingest(
                 "local::use-zustand",
@@ -337,30 +344,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ids[0], "local::use-zustand::0");
-        assert!(GliaDb::is_local_skill(&ids[0]));
+        assert!(HelixClient::is_local_skill(&ids[0]));
     }
 
     #[tokio::test]
     async fn ingest_links_skill_to_stack() {
-        let Some((db, emb)) = setup().await else {
+        let Some(emb) = Embedder::try_new().map(Arc::new) else {
+            eprintln!("SKIP: embed model assets missing");
             return;
         };
-        db.upsert_stack(
-            "nextjs",
-            Stack {
-                name: "Next.js".into(),
-            },
-        )
-        .await
-        .unwrap();
-        let pipe = Pipeline::new(db.clone(), emb);
+        let Some(client) = try_helix().await else {
+            eprintln!("SKIP: no helixdb at http://127.0.0.1:6969");
+            return;
+        };
+        client
+            .upsert_stack(
+                "nextjs",
+                glia_helix::Stack {
+                    name: "Next.js".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let pipe = Pipeline::new(client.clone(), emb);
         pipe.ingest("nextjs::hooks", "## Hooks\nUse useState, useEffect.")
             .await
             .unwrap();
-        db.relate_skill_applies_to_stack("nextjs::hooks::0", "nextjs")
+        client
+            .relate_skill_applies_to_stack("nextjs::hooks::0", "nextjs")
             .await
             .unwrap();
-        let skills = db.skills_for_stack("nextjs").await.unwrap();
+        let skills = client.skills_for_stack("nextjs").await.unwrap();
         assert_eq!(skills.len(), 1);
         assert!(skills[0].content.contains("useState"));
     }

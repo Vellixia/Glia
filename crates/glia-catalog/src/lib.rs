@@ -178,7 +178,7 @@ pub struct UseResult {
 pub async fn use_tool(
     source: &dyn CatalogSource,
     name: &str,
-    db: &glia_db::GliaDb,
+    db: &glia_helix::HelixClient,
     embedder: &glia_embed::Embedder,
 ) -> Result<UseResult, CatalogError> {
     let index = source.fetch_index().await?;
@@ -193,7 +193,7 @@ pub async fn use_tool(
     let now = chrono::Utc::now().to_rfc3339();
     db.upsert_skill(
         &skill_id,
-        glia_db::Skill {
+        glia_helix::Skill {
             content: content.clone(),
             source: entry.path.clone(),
             embedding: vector,
@@ -205,7 +205,7 @@ pub async fn use_tool(
     for stack in &entry.stacks {
         db.upsert_stack(
             stack,
-            glia_db::Stack {
+            glia_helix::Stack {
                 name: stack.clone(),
             },
         )
@@ -232,7 +232,6 @@ pub async fn list_tools(source: &dyn CatalogSource) -> Result<Vec<CatalogEntry>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::Connection;
     use std::collections::HashMap;
 
     fn entry(name: &str, creds: Vec<String>) -> CatalogEntry {
@@ -287,14 +286,24 @@ mod tests {
         assert!(content.contains("Linear"));
     }
 
+    async fn try_db() -> Option<glia_helix::HelixClient> {
+        let client = glia_helix::HelixClient::connect(None, None).ok()?;
+        if client.ping().await.is_err() {
+            return None;
+        }
+        Some(client)
+    }
+
     #[tokio::test]
     async fn use_tool_registers_community_skill() {
         let Some(emb) = glia_embed::Embedder::try_new() else {
             return;
         };
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let s = stub();
-        let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
         let result = use_tool(&s, "linear-create-issue", &db, &emb)
             .await
             .unwrap();
@@ -309,9 +318,11 @@ mod tests {
         let Some(emb) = glia_embed::Embedder::try_new() else {
             return;
         };
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let s = stub();
-        let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
         let err = use_tool(&s, "nope", &db, &emb).await.unwrap_err();
         assert!(matches!(err, CatalogError::NotFound(_)));
     }
@@ -329,9 +340,11 @@ mod tests {
         let Some(emb) = glia_embed::Embedder::try_new() else {
             return;
         };
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let s = stub();
-        let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
         use_tool(&s, "linear-create-issue", &db, &emb)
             .await
             .unwrap();
