@@ -899,12 +899,12 @@ pub fn load_device_token() -> Option<String> {
     // Minimal TOML parse: look for `hub_token = "..."`.
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("hub_token") {
-            if let Some(val) = line.split('=').nth(1) {
-                let token = val.trim().trim_matches('"').to_string();
-                if !token.is_empty() {
-                    return Some(token);
-                }
+        if line.starts_with("hub_token")
+            && let Some(val) = line.split('=').nth(1)
+        {
+            let token = val.trim().trim_matches('"').to_string();
+            if !token.is_empty() {
+                return Some(token);
             }
         }
     }
@@ -1081,7 +1081,7 @@ async fn run_doctor() -> anyhow::Result<()> {
     let results = probe_runtimes(&runtimes);
 
     let mut any_missing = false;
-    println!("{:<10} {}", "RUNTIME", "STATUS");
+    println!("{:<10} STATUS", "RUNTIME");
     println!("{}", "-".repeat(22));
     for r in &results {
         let status = if r.found { "ok" } else { "MISSING" };

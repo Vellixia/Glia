@@ -348,10 +348,8 @@ fn merge_mcp_into_json(existing: &str) -> String {
         .get("mcpServers")
         .map(|v| v.is_object())
         .unwrap_or(false);
-    if !has_mcp {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("mcpServers".to_string(), serde_json::json!({}));
-        }
+    if !has_mcp && let Some(obj) = settings.as_object_mut() {
+        obj.insert("mcpServers".to_string(), serde_json::json!({}));
     }
 
     // Insert/update the glia-bridge entry.

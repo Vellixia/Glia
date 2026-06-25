@@ -246,10 +246,10 @@ impl UsageStore {
             if line.is_empty() {
                 continue;
             }
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if let (Some(source), Some(count)) = (v["source"].as_str(), v["count"].as_u64()) {
-                    counts.insert(source.to_owned(), count as u32);
-                }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+                && let (Some(source), Some(count)) = (v["source"].as_str(), v["count"].as_u64())
+            {
+                counts.insert(source.to_owned(), count as u32);
             }
         }
         Self { counts }
