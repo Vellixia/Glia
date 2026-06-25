@@ -26,15 +26,12 @@ async fn is_bao_live() -> bool {
 
 #[tokio::test]
 async fn real_bao_kv_put_get_live() {
-if !is_bao_live().await {
+    if !is_bao_live().await {
         eprintln!("SKIP: no openbao");
         return;
     }
     let bao = http_bao();
-    let path = format!(
-        "secret/data/real-bao-kv-{}",
-        chrono::Utc::now().timestamp()
-    );
+    let path = format!("secret/data/real-bao-kv-{}", chrono::Utc::now().timestamp());
     let secret = Secret::single("api_key", "real-bao-secret");
     bao.kv_put(&path, &secret).await.unwrap();
     let got = bao.kv_get(&path).await.unwrap();
@@ -65,9 +62,7 @@ async fn real_bao_kv_get_missing_live() {
         return;
     }
     let bao = http_bao();
-    let result = bao
-        .kv_get("secret/data/real-bao-missing-path-xyz")
-        .await;
+    let result = bao.kv_get("secret/data/real-bao-missing-path-xyz").await;
     assert!(result.is_err());
 }
 
@@ -107,9 +102,7 @@ async fn real_bao_response_wrapping_round_trip_live() {
     let secret = Secret::single("wrapped_token", "wrap-this-value");
     bao.kv_put(&path, &secret).await.unwrap();
 
-    let wrap_result = bao
-        .mint_wrapping(&path, Duration::from_secs(300))
-        .await;
+    let wrap_result = bao.mint_wrapping(&path, Duration::from_secs(300)).await;
     if let Err(e) = &wrap_result {
         eprintln!("SKIP: mint_wrapping failed: {e}");
         return;
@@ -132,9 +125,7 @@ async fn real_bao_single_use_token_enforcement_live() {
         "secret/data/real-bao-single-use-{}",
         chrono::Utc::now().timestamp()
     );
-    bao.kv_put(&path, &Secret::single("k", "v"))
-        .await
-        .unwrap();
+    bao.kv_put(&path, &Secret::single("k", "v")).await.unwrap();
     let wrap_token = match bao.mint_wrapping(&path, Duration::from_secs(300)).await {
         Ok(t) => t,
         Err(e) => {

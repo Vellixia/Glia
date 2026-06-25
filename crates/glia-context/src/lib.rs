@@ -274,14 +274,11 @@ impl ContextWatcher {
             let (std_tx, std_rx) = std::sync::mpsc::channel::<PathBuf>();
 
             let closure_tx = std_tx.clone();
-            let mut watcher = match notify::recommended_watcher(
-                move |res: notify::Result<notify::Event>| {
+            let mut watcher =
+                match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                     if let Ok(event) = res {
                         // Only forward create/modify events for source files.
-                        if matches!(
-                            event.kind,
-                            EventKind::Create(_) | EventKind::Modify(_)
-                        ) {
+                        if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                             for path in event.paths {
                                 if should_watch_path(&path) {
                                     let _ = closure_tx.send(path);
@@ -289,14 +286,13 @@ impl ContextWatcher {
                             }
                         }
                     }
-                },
-            ) {
-                Ok(w) => w,
-                Err(e) => {
-                    tracing::error!(err = %e, "watcher init failed");
-                    return;
-                }
-            };
+                }) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        tracing::error!(err = %e, "watcher init failed");
+                        return;
+                    }
+                };
             // Drop our explicit copy; only the closure holds std_tx now.
             drop(std_tx);
 

@@ -101,7 +101,9 @@ async fn invalid_utf8_file_returns_nonutf8_error() {
 
     // Write raw invalid-UTF-8 bytes directly (bypass write_file which takes &str).
     let path = tmp.path().join("binary.dat");
-    tokio::fs::write(&path, &[0xFF, 0xFE, 0x00, 0x01]).await.unwrap();
+    tokio::fs::write(&path, &[0xFF, 0xFE, 0x00, 0x01])
+        .await
+        .unwrap();
 
     let err = fs.read_file("binary.dat").await;
     assert!(matches!(err, Err(glia_fs::FsError::NonUtf8)));
@@ -118,7 +120,9 @@ async fn list_empty_dir_returns_empty_vec() {
     assert!(entries.contains(&".keep".to_string()));
 
     // Now test truly empty dir.
-    tokio::fs::create_dir(tmp.path().join("empty")).await.unwrap();
+    tokio::fs::create_dir(tmp.path().join("empty"))
+        .await
+        .unwrap();
     let entries = fs.list_dir("empty").await.unwrap();
     assert!(entries.is_empty());
 }
@@ -169,7 +173,10 @@ async fn deeply_nested_path_write_read() {
     let tmp = tempfile::tempdir().unwrap();
     let fs = Fs::new(tmp.path());
 
-    let deep = (0..20).map(|i| format!("level{i}")).collect::<Vec<_>>().join("/");
+    let deep = (0..20)
+        .map(|i| format!("level{i}"))
+        .collect::<Vec<_>>()
+        .join("/");
     let path = format!("{deep}/file.txt");
     fs.write_file(&path, "deep").await.unwrap();
     let got = fs.read_file(&path).await.unwrap();
@@ -181,7 +188,9 @@ async fn unicode_path_roundtrip() {
     let tmp = tempfile::tempdir().unwrap();
     let fs = Fs::new(tmp.path());
 
-    fs.write_file("héllo/日本語.txt", "unicode content").await.unwrap();
+    fs.write_file("héllo/日本語.txt", "unicode content")
+        .await
+        .unwrap();
     let got = fs.read_file("héllo/日本語.txt").await.unwrap();
     assert_eq!(got, "unicode content");
 }
@@ -235,7 +244,9 @@ async fn file_info_on_directory() {
     let fs = Fs::new(tmp.path());
 
     fs.write_file("file.txt", "x").await.unwrap();
-    tokio::fs::create_dir(tmp.path().join("mydir")).await.unwrap();
+    tokio::fs::create_dir(tmp.path().join("mydir"))
+        .await
+        .unwrap();
     let info = fs.file_info("mydir").await.unwrap();
     assert!(info.is_dir);
     assert!(!info.is_file);
@@ -266,7 +277,9 @@ async fn read_file_on_directory_errors() {
     let tmp = tempfile::tempdir().unwrap();
     let fs = Fs::new(tmp.path());
 
-    tokio::fs::create_dir(tmp.path().join("adir")).await.unwrap();
+    tokio::fs::create_dir(tmp.path().join("adir"))
+        .await
+        .unwrap();
     // Reading a directory should error (IO error or similar).
     let err = fs.read_file("adir").await;
     assert!(err.is_err());

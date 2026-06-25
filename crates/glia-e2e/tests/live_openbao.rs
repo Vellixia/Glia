@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{openbao_live, OPENBAO_TOKEN, OPENBAO_URL};
+use common::{OPENBAO_TOKEN, OPENBAO_URL, openbao_live};
 use glia_bao::{OpenBao, Secret};
 use std::sync::Arc;
 
@@ -51,9 +51,7 @@ async fn openbao_kv_get_missing_returns_not_found_live() {
         return;
     }
     let bao = http_bao().await;
-    let result = bao
-        .kv_get("secret/data/nonexistent-e2e-path-xyz")
-        .await;
+    let result = bao.kv_get("secret/data/nonexistent-e2e-path-xyz").await;
     assert!(result.is_err());
 }
 
@@ -64,10 +62,7 @@ async fn openbao_kv_put_multiple_fields_live() {
         return;
     }
     let bao = http_bao().await;
-    let path = format!(
-        "secret/data/e2e-multi-{}",
-        chrono::Utc::now().timestamp()
-    );
+    let path = format!("secret/data/e2e-multi-{}", chrono::Utc::now().timestamp());
     let mut data = serde_json::Map::new();
     data.insert("key1".into(), "val1".into());
     data.insert("key2".into(), "val2".into());
@@ -122,10 +117,7 @@ async fn openbao_response_wrapping_round_trip_live() {
         return;
     }
     let bao = http_bao().await;
-    let path = format!(
-        "secret/data/e2e-wrap-{}",
-        chrono::Utc::now().timestamp()
-    );
+    let path = format!("secret/data/e2e-wrap-{}", chrono::Utc::now().timestamp());
     let secret = Secret::single("token", "wrap-me-please");
     bao.kv_put(&path, &secret).await.unwrap();
 
@@ -152,13 +144,8 @@ async fn openbao_unwrap_already_consumed_token_fails_live() {
         return;
     }
     let bao = http_bao().await;
-    let path = format!(
-        "secret/data/e2e-consume-{}",
-        chrono::Utc::now().timestamp()
-    );
-    bao.kv_put(&path, &Secret::single("k", "v"))
-        .await
-        .unwrap();
+    let path = format!("secret/data/e2e-consume-{}", chrono::Utc::now().timestamp());
+    bao.kv_put(&path, &Secret::single("k", "v")).await.unwrap();
     let wrap_result = bao
         .mint_wrapping(&path, std::time::Duration::from_secs(300))
         .await;
@@ -188,10 +175,7 @@ async fn openbao_transit_encrypt_decrypt_live() {
     // Try to create a transit key first via raw API.
     let client = reqwest::Client::new();
     let create_result = client
-        .post(format!(
-            "{}/v1/transit/keys/e2e-test-key",
-            OPENBAO_URL
-        ))
+        .post(format!("{}/v1/transit/keys/e2e-test-key", OPENBAO_URL))
         .header("X-Vault-Token", OPENBAO_TOKEN)
         .json(&serde_json::json!({"type":"aes256-gcm96"}))
         .send()

@@ -427,7 +427,10 @@ mod tests {
             "mcp_registered should not be empty"
         );
         assert!(
-            result.mcp_registered.iter().any(|p| p.contains("settings.json")),
+            result
+                .mcp_registered
+                .iter()
+                .any(|p| p.contains("settings.json")),
             "Claude Code settings.json should be in mcp_registered"
         );
         assert!(
@@ -444,16 +447,18 @@ mod tests {
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let result = run(&dir).await.unwrap();
         // Claude Code: .claude/settings.json must have mcpServers.glia-bridge.
-        let claude_settings =
-            tokio::fs::read_to_string(dir.join(".claude/settings.json")).await.unwrap();
+        let claude_settings = tokio::fs::read_to_string(dir.join(".claude/settings.json"))
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&claude_settings).unwrap();
         assert!(
             v["mcpServers"]["glia-bridge"]["command"].as_str() == Some("glia"),
             "Claude Code MCP entry missing"
         );
         // Cursor: .cursor/mcp.json must have mcpServers.glia-bridge.
-        let cursor_mcp =
-            tokio::fs::read_to_string(dir.join(".cursor/mcp.json")).await.unwrap();
+        let cursor_mcp = tokio::fs::read_to_string(dir.join(".cursor/mcp.json"))
+            .await
+            .unwrap();
         let v2: serde_json::Value = serde_json::from_str(&cursor_mcp).unwrap();
         assert!(
             v2["mcpServers"]["glia-bridge"]["command"].as_str() == Some("glia"),
@@ -525,7 +530,9 @@ mod tests {
     async fn count_files_skips_pycache() {
         let dir = tmp();
         write(&dir.join("main.py"), "x").await;
-        tokio::fs::create_dir_all(dir.join("__pycache__")).await.unwrap();
+        tokio::fs::create_dir_all(dir.join("__pycache__"))
+            .await
+            .unwrap();
         write(&dir.join("__pycache__/main.pyc"), "y").await;
         let count = count_files(&dir, 100).await.unwrap();
         assert_eq!(count, 1, "__pycache__ should be skipped");
@@ -591,7 +598,9 @@ mod tests {
     #[tokio::test]
     async fn scan_repo_with_only_git_dir_returns_empty_stacks() {
         let dir = tmp();
-        tokio::fs::create_dir_all(dir.join(".git/hooks")).await.unwrap();
+        tokio::fs::create_dir_all(dir.join(".git/hooks"))
+            .await
+            .unwrap();
         let stacks = scan_repo(&dir).await.unwrap();
         assert!(stacks.is_empty());
         let _ = tokio::fs::remove_dir_all(&dir).await;

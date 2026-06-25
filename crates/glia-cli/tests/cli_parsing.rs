@@ -8,9 +8,8 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn glia() -> Command {
-    Command::cargo_bin("glia").unwrap_or_else(|_| {
-        panic!("glia binary not found — run cargo build -p glia-cli first")
-    })
+    Command::cargo_bin("glia")
+        .unwrap_or_else(|_| panic!("glia binary not found — run cargo build -p glia-cli first"))
 }
 
 #[test]
@@ -24,20 +23,12 @@ fn cli_no_subcommand_errors_exit_2() {
 
 #[test]
 fn cli_unknown_subcommand_errors_exit_2() {
-    glia()
-        .arg("foobar")
-        .assert()
-        .failure()
-        .code(2);
+    glia().arg("foobar").assert().failure().code(2);
 }
 
 #[test]
 fn cli_action_missing_intent_errors_exit_2() {
-    glia()
-        .arg("action")
-        .assert()
-        .failure()
-        .code(2);
+    glia().arg("action").assert().failure().code(2);
 }
 
 #[test]
@@ -51,38 +42,22 @@ fn cli_action_intent_flag_without_value_errors_exit_2() {
 
 #[test]
 fn cli_save_skill_missing_description_errors_exit_2() {
-    glia()
-        .arg("save-skill")
-        .assert()
-        .failure()
-        .code(2);
+    glia().arg("save-skill").assert().failure().code(2);
 }
 
 #[test]
 fn cli_use_missing_tool_positional_errors_exit_2() {
-    glia()
-        .arg("use")
-        .assert()
-        .failure()
-        .code(2);
+    glia().arg("use").assert().failure().code(2);
 }
 
 #[test]
 fn cli_chunk_no_op_errors_exit_2() {
-    glia()
-        .arg("chunk")
-        .assert()
-        .failure()
-        .code(2);
+    glia().arg("chunk").assert().failure().code(2);
 }
 
 #[test]
 fn cli_chunk_unknown_op_errors_exit_2() {
-    glia()
-        .args(["chunk", "foobar"])
-        .assert()
-        .failure()
-        .code(2);
+    glia().args(["chunk", "foobar"]).assert().failure().code(2);
 }
 
 #[test]
@@ -167,27 +142,18 @@ fn cli_help_chunk_ingest_exits_0() {
 
 #[test]
 fn cli_version_flag_exits_0() {
-    glia()
-        .arg("--version")
-        .assert()
-        .success();
+    glia().arg("--version").assert().success();
 }
 
 #[test]
 fn cli_help_context_exits_0() {
-    glia()
-        .args(["context", "--help"])
-        .assert()
-        .success();
+    glia().args(["context", "--help"]).assert().success();
 }
 
 #[test]
 fn cli_context_no_file_exits_0() {
     // Without --file, context emits a warning and exits 0 (graceful).
-    glia()
-        .args(["context"])
-        .assert()
-        .success();
+    glia().args(["context"]).assert().success();
 }
 
 #[test]

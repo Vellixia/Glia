@@ -92,9 +92,11 @@ async fn oauth_status_different_cred_not_ready() {
 #[tokio::test]
 async fn oauth_callback_unknown_state_returns_400() {
     let base = spawn_hub().await;
-    let resp = reqwest::get(format!("{base}/oauth/callback?code=abc&state=unknown_state"))
-        .await
-        .unwrap();
+    let resp = reqwest::get(format!(
+        "{base}/oauth/callback?code=abc&state=unknown_state"
+    ))
+    .await
+    .unwrap();
     assert_eq!(resp.status(), 400);
 }
 
@@ -118,7 +120,11 @@ async fn oauth_callback_is_bearer_exempt() {
     let resp = reqwest::get(format!("{base}/oauth/callback?code=x&state=no_such_state"))
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400, "callback must be exempt from bearer gate");
+    assert_eq!(
+        resp.status(),
+        400,
+        "callback must be exempt from bearer gate"
+    );
 }
 
 // ─────────────────── /oauth/start / /oauth/provider — bearer gate ───────────────────

@@ -101,9 +101,10 @@ fn concurrent_auth_waiters_independent() {
             let w_clone = std::sync::Arc::new(w);
             let w_for_wait = w_clone.clone();
             // Start waiting FIRST so the tx is set up.
-            let wait_task = tokio::spawn(async move {
-                w_for_wait.wait_for_callback(Duration::from_secs(10)).await
-            });
+            let wait_task =
+                tokio::spawn(
+                    async move { w_for_wait.wait_for_callback(Duration::from_secs(10)).await },
+                );
             wait_tasks.push(wait_task);
             urls.push(url);
             // Hold the Arc to prevent shutdown.

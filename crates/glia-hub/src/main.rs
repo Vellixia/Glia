@@ -17,17 +17,16 @@ async fn main() -> anyhow::Result<()> {
     let hub_token = std::env::var("GLIA_HUB_TOKEN").ok();
     let bao_url = std::env::var("GLIA_BAO_URL").ok();
     let bao_token = std::env::var("GLIA_BAO_TOKEN").ok();
-    let bao: Option<std::sync::Arc<dyn glia_bao::OpenBao>> =
-        match (bao_url, bao_token) {
-            (Some(url), Some(token)) => {
-                tracing::info!("OpenBao configured");
-                Some(std::sync::Arc::new(glia_bao::HttpOpenBao::new(url, token)))
-            }
-            _ => {
-                tracing::warn!("GLIA_BAO_URL/TOKEN not set — using in-memory stub (dev only)");
-                None
-            }
-        };
+    let bao: Option<std::sync::Arc<dyn glia_bao::OpenBao>> = match (bao_url, bao_token) {
+        (Some(url), Some(token)) => {
+            tracing::info!("OpenBao configured");
+            Some(std::sync::Arc::new(glia_bao::HttpOpenBao::new(url, token)))
+        }
+        _ => {
+            tracing::warn!("GLIA_BAO_URL/TOKEN not set — using in-memory stub (dev only)");
+            None
+        }
+    };
     tracing::info!(%bind, auth = hub_token.is_some(), "glia-hub starting");
 
     // Run the server with graceful shutdown on SIGINT/SIGTERM.

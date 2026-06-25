@@ -23,7 +23,10 @@ async fn real_redis_ping() {
 #[tokio::test]
 async fn real_redis_put_get_delete_round_trip() {
     let Some(c) = redis().await else { return };
-    let key = format!("glia::real::{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let key = format!(
+        "glia::real::{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     c.put_bytes(&key, b"hello-real-redis", Duration::from_secs(60))
         .await
         .unwrap();
@@ -36,7 +39,10 @@ async fn real_redis_put_get_delete_round_trip() {
 #[tokio::test]
 async fn real_redis_ttl_expiry() {
     let Some(c) = redis().await else { return };
-    let key = format!("glia::ttl::{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let key = format!(
+        "glia::ttl::{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     c.put_bytes(&key, b"expires", Duration::from_secs(1))
         .await
         .unwrap();
@@ -48,7 +54,10 @@ async fn real_redis_ttl_expiry() {
 #[tokio::test]
 async fn real_redis_missing_key_returns_none() {
     let Some(c) = redis().await else { return };
-    let result = c.get_bytes("glia::nonexistent-xyz-key-12345").await.unwrap();
+    let result = c
+        .get_bytes("glia::nonexistent-xyz-key-12345")
+        .await
+        .unwrap();
     assert!(result.is_none());
 }
 
@@ -61,7 +70,10 @@ async fn real_redis_delete_missing_idempotent() {
 #[tokio::test]
 async fn real_redis_large_value_100kb() {
     let Some(c) = redis().await else { return };
-    let key = format!("glia::large::{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let key = format!(
+        "glia::large::{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     let val = vec![0xCDu8; 100_000];
     c.put_bytes(&key, &val, Duration::from_secs(60))
         .await
@@ -97,7 +109,11 @@ async fn real_redis_concurrent_writes() {
     for i in 0..20 {
         let c = c.clone();
         handles.push(tokio::spawn(async move {
-            let key = format!("glia::conc::{}::{}", i, chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+            let key = format!(
+                "glia::conc::{}::{}",
+                i,
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            );
             c.put_bytes(&key, format!("v{i}").as_bytes(), Duration::from_secs(30))
                 .await
                 .unwrap();
@@ -112,7 +128,10 @@ async fn real_redis_concurrent_writes() {
 #[tokio::test]
 async fn real_redis_overwrite_same_key() {
     let Some(c) = redis().await else { return };
-    let key = format!("glia::overwrite::{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let key = format!(
+        "glia::overwrite::{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     c.put_bytes(&key, b"v1", Duration::from_secs(60))
         .await
         .unwrap();
@@ -127,7 +146,10 @@ async fn real_redis_overwrite_same_key() {
 #[tokio::test]
 async fn real_redis_empty_value() {
     let Some(c) = redis().await else { return };
-    let key = format!("glia::empty::{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let key = format!(
+        "glia::empty::{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     c.put_bytes(&key, b"", Duration::from_secs(60))
         .await
         .unwrap();

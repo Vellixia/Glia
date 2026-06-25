@@ -2,8 +2,7 @@
 //! child env, purged after exec. Verifies V9: runtime availability check.
 
 use glia_sandbox::{
-    FailingUnwrapper, MockUnwrapper, Runtime, Sandbox, SandboxError, Secret,
-    SingleUseUnwrapper,
+    FailingUnwrapper, MockUnwrapper, Runtime, Sandbox, SandboxError, Secret, SingleUseUnwrapper,
 };
 use std::collections::HashMap;
 
@@ -125,7 +124,9 @@ async fn docker_image_not_pulled_errors() {
     let unwrapper = MockUnwrapper::new(secret_env("K", "V"));
     let mut sandbox = Sandbox::new(&unwrapper);
     sandbox.stage_token("tok").unwrap();
-    let result = sandbox.exec(Runtime::Docker, "nonexistent-image-xyz:latest", &[]).await;
+    let result = sandbox
+        .exec(Runtime::Docker, "nonexistent-image-xyz:latest", &[])
+        .await;
     // Docker might not be installed → RuntimeNotFound.
     // Or image not pulled → NonZeroExit.
     // Either is acceptable — just no panic.

@@ -4,9 +4,8 @@
 use assert_cmd::Command;
 
 fn glia() -> Command {
-    Command::cargo_bin("glia").unwrap_or_else(|_| {
-        panic!("glia binary not found — run cargo build -p glia-cli first")
-    })
+    Command::cargo_bin("glia")
+        .unwrap_or_else(|_| panic!("glia binary not found — run cargo build -p glia-cli first"))
 }
 
 #[test]
@@ -30,12 +29,7 @@ fn action_hub_unreachable_exits_2() {
 #[test]
 fn save_skill_hub_unreachable_exits_2() {
     glia()
-        .args([
-            "save-skill",
-            "test skill",
-            "--hub",
-            "http://127.0.0.1:1",
-        ])
+        .args(["save-skill", "test skill", "--hub", "http://127.0.0.1:1"])
         .assert()
         .failure()
         .code(2);

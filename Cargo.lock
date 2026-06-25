@@ -1331,6 +1331,7 @@ dependencies = [
  "glia-hooks",
  "glia-init",
  "glia-review",
+ "glia-sandbox",
  "glia-sync",
  "glia-synth",
  "predicates",

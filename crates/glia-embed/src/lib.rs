@@ -273,6 +273,9 @@ mod tests {
         let sim_same = cos(&a, &same);
         let sim_diff = cos(&a, &diff);
         // Identical text should always score higher than different text.
-        assert!(sim_same > sim_diff, "identical {sim_same} should exceed different {sim_diff}");
+        assert!(
+            sim_same > sim_diff,
+            "identical {sim_same} should exceed different {sim_diff}"
+        );
     }
 }

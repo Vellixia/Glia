@@ -11,10 +11,7 @@ fn now() -> String {
 
 async fn helix_live() -> Option<HelixClient> {
     let client = HelixClient::connect(Some("http://127.0.0.1:6969"), None).ok()?;
-    if reqwest::get("http://127.0.0.1:6969/health")
-        .await
-        .is_err()
-    {
+    if reqwest::get("http://127.0.0.1:6969/health").await.is_err() {
         return None;
     }
     Some(client)
@@ -35,21 +32,25 @@ async fn real_helix_health() {
         eprintln!("SKIP: no helixdb");
         return;
     }
-    let resp = reqwest::get("http://127.0.0.1:6969/health")
-        .await
-        .unwrap();
+    let resp = reqwest::get("http://127.0.0.1:6969/health").await.unwrap();
     assert_eq!(resp.status(), 200);
 }
 
 #[tokio::test]
 async fn real_helix_concurrent_upserts() {
-    let Some(client) = helix_with_schema().await else { return };
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
     use std::sync::Arc;
     let c = Arc::new(client);
     let mut handles = Vec::new();
     for i in 0..10 {
         let cc = c.clone();
-        let id = format!("real-conc-{}-{}", i, chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let id = format!(
+            "real-conc-{}-{}",
+            i,
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
         handles.push(tokio::spawn(async move {
             let tool = Tool {
                 name: format!("Concurrent Tool {i}"),
@@ -69,8 +70,13 @@ async fn real_helix_concurrent_upserts() {
 
 #[tokio::test]
 async fn real_helix_large_skill_body() {
-    let Some(client) = helix_with_schema().await else { return };
-    let id = format!("real-large-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
+    let id = format!(
+        "real-large-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     let large_body = "x".repeat(100_000);
     let skill = Skill {
         content: large_body,
@@ -86,8 +92,13 @@ async fn real_helix_large_skill_body() {
 
 #[tokio::test]
 async fn real_helix_unicode_skill_id() {
-    let Some(client) = helix_with_schema().await else { return };
-    let id = format!("real-unicode-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
+    let id = format!(
+        "real-unicode-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     let skill = Skill {
         content: "unicode body".into(),
         source: id.clone(),
@@ -101,8 +112,13 @@ async fn real_helix_unicode_skill_id() {
 
 #[tokio::test]
 async fn real_helix_lww_upsert() {
-    let Some(client) = helix_with_schema().await else { return };
-    let id = format!("real-lww-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
+    let id = format!(
+        "real-lww-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     // First write.
     client
         .upsert_skill(
@@ -138,7 +154,9 @@ async fn real_helix_lww_upsert() {
 
 #[tokio::test]
 async fn real_helix_graph_edge_chain() {
-    let Some(client) = helix_with_schema().await else { return };
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
     let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
     let tool_id = format!("real-chain-tool-{ts}");
     let auth_id = format!("real-chain-auth-{ts}");
@@ -187,7 +205,12 @@ async fn real_helix_graph_edge_chain() {
         .await
         .unwrap();
     client
-        .upsert_stack(&stack_id, Stack { name: "Chain Stack".into() })
+        .upsert_stack(
+            &stack_id,
+            Stack {
+                name: "Chain Stack".into(),
+            },
+        )
         .await
         .unwrap();
     client
@@ -204,7 +227,9 @@ async fn real_helix_graph_edge_chain() {
 
 #[tokio::test]
 async fn real_helix_list_skills_returns_vec() {
-    let Some(client) = helix_with_schema().await else { return };
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
     let skills = client.list_skills().await.unwrap();
     // May be empty or have data from other tests. Just verify Vec.
     let _ = skills.len();
@@ -212,8 +237,13 @@ async fn real_helix_list_skills_returns_vec() {
 
 #[tokio::test]
 async fn real_helix_zero_embedding_skill() {
-    let Some(client) = helix_with_schema().await else { return };
-    let id = format!("real-zero-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let Some(client) = helix_with_schema().await else {
+        return;
+    };
+    let id = format!(
+        "real-zero-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     let skill = Skill {
         content: "zero vec".into(),
         source: id.clone(),

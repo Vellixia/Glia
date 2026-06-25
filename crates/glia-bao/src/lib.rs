@@ -857,7 +857,10 @@ mod tests {
         let bao = stub();
         let encrypted = bao.transit_encrypt("glia-transit", b"").await.unwrap();
         assert!(!encrypted.is_empty());
-        let decrypted = bao.transit_decrypt("glia-transit", &encrypted).await.unwrap();
+        let decrypted = bao
+            .transit_decrypt("glia-transit", &encrypted)
+            .await
+            .unwrap();
         assert!(decrypted.is_empty());
     }
 

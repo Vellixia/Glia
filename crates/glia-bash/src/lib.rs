@@ -148,10 +148,12 @@ pub async fn run(cfg: &BashConfig, command: &str) -> Result<BashOutput, BashErro
     // Reject tokens containing shell metacharacters that would be dangerous
     // if this code ever regressed to shell-string exec.
     for token in &argv {
-        if token
-            .chars()
-            .any(|c| matches!(c, ';' | '&' | '|' | '`' | '$' | '(' | ')' | '{' | '}' | '<' | '>'))
-        {
+        if token.chars().any(|c| {
+            matches!(
+                c,
+                ';' | '&' | '|' | '`' | '$' | '(' | ')' | '{' | '}' | '<' | '>'
+            )
+        }) {
             return Err(BashError::CommandDenied(format!(
                 "shell metacharacter in: {token}"
             )));

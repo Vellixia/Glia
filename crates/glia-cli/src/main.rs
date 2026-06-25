@@ -392,7 +392,10 @@ fn is_hub_unreachable(err: &anyhow::Error) -> bool {
         cause
             .downcast_ref::<glia_helix::HelixError>()
             .is_some_and(|e| {
-                matches!(e, glia_helix::HelixError::Connect(_) | glia_helix::HelixError::Http(_))
+                matches!(
+                    e,
+                    glia_helix::HelixError::Connect(_) | glia_helix::HelixError::Http(_)
+                )
             })
     })
 }
@@ -421,8 +424,7 @@ async fn run_sync(hub: String, token: Option<String>, status_only: bool) -> anyh
 
     // Re-render agent configs from Hub after every sync (Phase 3 / C).
     // Runs best-effort: failures are warnings, not errors.
-    let repo_root =
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let skills = client.list_skills().await.unwrap_or_default();
     let stacks = glia_init::scan_repo(&repo_root)
         .await
@@ -469,9 +471,11 @@ async fn run_action(
         glia_action::UsageStore::default()
     };
 
-    let action = glia_action::Action::new(client, embedder, executor)
-        .with_usage(usage.clone());
-    let intent_struct = glia_action::Intent { query: intent, stack };
+    let action = glia_action::Action::new(client, embedder, executor).with_usage(usage.clone());
+    let intent_struct = glia_action::Intent {
+        query: intent,
+        stack,
+    };
     let result = action.run(intent_struct).await?;
 
     // Record cited skills and save updated usage store.
@@ -485,13 +489,7 @@ async fn run_action(
     }
 
     if let glia_action::Outcome::AuthRequired { deps } = &result.outcome {
-        handle_auth_required_via_hub(
-            deps,
-            &hub,
-            token.as_deref(),
-            glia_auth::AUTH_TIMEOUT,
-        )
-        .await?;
+        handle_auth_required_via_hub(deps, &hub, token.as_deref(), glia_auth::AUTH_TIMEOUT).await?;
     }
 
     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -802,9 +800,7 @@ async fn run_context(
     let file_path = match file {
         Some(f) => std::path::PathBuf::from(f),
         None => {
-            eprintln!(
-                "glia context: --file is required (or use --stacks to filter)"
-            );
+            eprintln!("glia context: --file is required (or use --stacks to filter)");
             println!();
             return Ok(());
         }
@@ -821,11 +817,7 @@ async fn run_context(
 }
 
 /// `glia provider add/list` — manage OAuth provider registry via the Hub.
-async fn run_provider(
-    op: ProviderOp,
-    hub: String,
-    token: Option<String>,
-) -> anyhow::Result<()> {
+async fn run_provider(op: ProviderOp, hub: String, token: Option<String>) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let hub = hub.trim_end_matches('/').to_string();
 
@@ -862,11 +854,10 @@ async fn run_provider(
         }
         ProviderOp::List => {
             // List providers directly via HelixDB client.
-            let helix_url = std::env::var("GLIA_HELIX_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:6969".into());
+            let helix_url =
+                std::env::var("GLIA_HELIX_URL").unwrap_or_else(|_| "http://127.0.0.1:6969".into());
             let helix_token = std::env::var("GLIA_HELIX_TOKEN").ok();
-            let helix =
-                glia_helix::HelixClient::connect(Some(&helix_url), helix_token.as_deref())?;
+            let helix = glia_helix::HelixClient::connect(Some(&helix_url), helix_token.as_deref())?;
             let providers = helix.list_providers().await?;
             let list: Vec<serde_json::Value> = providers
                 .into_iter()
@@ -892,7 +883,9 @@ fn device_config_path() -> std::path::PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".glia").join("config.toml")
+    std::path::PathBuf::from(home)
+        .join(".glia")
+        .join("config.toml")
 }
 
 /// Load the hub token from the device config (fallback if env var not set).
@@ -1015,10 +1008,7 @@ async fn run_review(
         ReviewOp::Capture { file, diff } => {
             let diff_str = diff.unwrap_or_default();
             let item = queue.capture(&file, &diff_str).await?;
-            println!(
-                "Captured review item {} for '{}'.",
-                item.id, item.file_path
-            );
+            println!("Captured review item {} for '{}'.", item.id, item.file_path);
         }
         ReviewOp::List => {
             let items = queue.list_pending().await?;
@@ -1029,7 +1019,10 @@ async fn run_review(
                     println!("  {} | {} | {}", item.id, item.file_path, item.created_at);
                     println!("    {}", item.candidate_rule.lines().next().unwrap_or(""));
                 }
-                println!("\n{} pending item(s). Use `glia review approve <id>` or `glia review reject <id>`.", items.len());
+                println!(
+                    "\n{} pending item(s). Use `glia review approve <id>` or `glia review reject <id>`.",
+                    items.len()
+                );
             }
         }
         ReviewOp::Approve { id } => {
@@ -1047,9 +1040,10 @@ async fn run_review(
                         embedding: vec![],
                         updated_at: item.created_at.clone(),
                     };
-                    client.upsert_skill(&source, skill).await.map_err(|e| {
-                        anyhow::anyhow!("skill upsert failed: {e}")
-                    })?;
+                    client
+                        .upsert_skill(&source, skill)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("skill upsert failed: {e}"))?;
                     println!("Approved and upserted skill '{source}' (no embedding).");
                     return Ok(());
                 }
@@ -1063,9 +1057,10 @@ async fn run_review(
                 embedding,
                 updated_at: item.created_at.clone(),
             };
-            client.upsert_skill(&source, skill).await.map_err(|e| {
-                anyhow::anyhow!("skill upsert failed: {e}")
-            })?;
+            client
+                .upsert_skill(&source, skill)
+                .await
+                .map_err(|e| anyhow::anyhow!("skill upsert failed: {e}"))?;
             println!("Approved and upserted skill '{source}'.");
         }
         ReviewOp::Reject { id } => {
@@ -1080,7 +1075,7 @@ async fn run_review(
 ///
 /// Exit 0 if all runtimes are found, exit 1 if any are missing so CI can gate.
 async fn run_doctor() -> anyhow::Result<()> {
-    use glia_sandbox::{probe_runtimes, Runtime};
+    use glia_sandbox::{Runtime, probe_runtimes};
 
     let runtimes = [Runtime::Npx, Runtime::Uvx, Runtime::Docker];
     let results = probe_runtimes(&runtimes);
@@ -1101,14 +1096,20 @@ async fn run_doctor() -> anyhow::Result<()> {
     println!(
         "{:<10} {}",
         "embed",
-        if embed_ok { "ok" } else { "MISSING (run `glia init`)" }
+        if embed_ok {
+            "ok"
+        } else {
+            "MISSING (run `glia init`)"
+        }
     );
     if !embed_ok {
         any_missing = true;
     }
 
     if any_missing {
-        eprintln!("\nSome dependencies are missing. Agent actions requiring them will return Outcome::RuntimeMissing.");
+        eprintln!(
+            "\nSome dependencies are missing. Agent actions requiring them will return Outcome::RuntimeMissing."
+        );
         std::process::exit(1);
     }
     Ok(())

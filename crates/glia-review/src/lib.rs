@@ -179,7 +179,10 @@ fn distill_rule(file_path: &str, diff: &str) -> String {
         .map(|l| l.trim_start_matches('+'))
         .collect();
     if added.is_empty() {
-        format!("Correction in `{}`: prefer the developer's version.", file_path)
+        format!(
+            "Correction in `{}`: prefer the developer's version.",
+            file_path
+        )
     } else {
         format!(
             "Correction in `{}` ({} file):\n\n```\n{}\n```",
@@ -333,7 +336,10 @@ mod tests {
 
     #[test]
     fn distill_rule_extracts_added_lines() {
-        let rule = distill_rule("auth.ts", "+const token = getToken();\n+validateToken(token);");
+        let rule = distill_rule(
+            "auth.ts",
+            "+const token = getToken();\n+validateToken(token);",
+        );
         assert!(rule.contains("auth.ts"));
         assert!(rule.contains("getToken"));
     }
@@ -361,7 +367,11 @@ mod tests {
 
     #[test]
     fn review_error_display() {
-        assert!(ReviewError::NotFound("x".into()).to_string().contains("not found"));
+        assert!(
+            ReviewError::NotFound("x".into())
+                .to_string()
+                .contains("not found")
+        );
         assert!(ReviewError::Hub("y".into()).to_string().contains("hub"));
     }
 }

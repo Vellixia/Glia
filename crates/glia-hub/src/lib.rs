@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{ConnectInfo, Path, Query, Request, State},
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::{ConnectInfo, Path, Query, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -107,8 +107,16 @@ fn url_encode(s: &str) -> String {
                 out.push('%');
                 let hi = byte >> 4;
                 let lo = byte & 0xF;
-                out.push(char::from_digit(hi as u32, 16).unwrap().to_ascii_uppercase());
-                out.push(char::from_digit(lo as u32, 16).unwrap().to_ascii_uppercase());
+                out.push(
+                    char::from_digit(hi as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit(lo as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
             }
         }
     }
@@ -150,9 +158,8 @@ fn helix_from_env() -> Result<glia_helix::HelixClient, StatusCode> {
 pub fn hub_router(hub_token: Option<String>, bao: Option<Arc<dyn glia_bao::OpenBao>>) -> Router {
     let oauth_state = OAuthState {
         flows: Arc::new(Mutex::new(HashMap::new())),
-        bao: bao.unwrap_or_else(|| {
-            Arc::new(glia_bao::StubOpenBao::new("stub-root", "glia-transit"))
-        }),
+        bao: bao
+            .unwrap_or_else(|| Arc::new(glia_bao::StubOpenBao::new("stub-root", "glia-transit"))),
     };
     let token = Arc::new(hub_token);
     Router::new()
@@ -226,7 +233,10 @@ async fn action_handler(
     let embedder = match glia_embed::Embedder::try_new() {
         Some(e) => Arc::new(e),
         None => {
-            return (StatusCode::SERVICE_UNAVAILABLE, "embed model assets not available")
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "embed model assets not available",
+            )
                 .into_response();
         }
     };
@@ -264,7 +274,7 @@ async fn register_provider_handler(
     let client = match helix_from_env() {
         Ok(c) => c,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "helix connect failed").into_response()
+            return (StatusCode::INTERNAL_SERVER_ERROR, "helix connect failed").into_response();
         }
     };
 
@@ -325,7 +335,7 @@ async fn start_oauth_handler(
     let client = match helix_from_env() {
         Ok(c) => c,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "helix connect failed").into_response()
+            return (StatusCode::INTERNAL_SERVER_ERROR, "helix connect failed").into_response();
         }
     };
 
@@ -336,22 +346,19 @@ async fn start_oauth_handler(
                 StatusCode::NOT_FOUND,
                 format!("provider '{}' not found", req.provider_id),
             )
-                .into_response()
+                .into_response();
         }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("helix get_provider: {e}"),
             )
-                .into_response()
+                .into_response();
         }
     };
 
     let state_token = generate_state();
-    let redirect_uri = format!(
-        "{}/oauth/callback",
-        req.callback_base.trim_end_matches('/')
-    );
+    let redirect_uri = format!("{}/oauth/callback", req.callback_base.trim_end_matches('/'));
 
     {
         let mut flows = oauth.flows.lock().await;
@@ -405,19 +412,13 @@ async fn oauth_callback_handler(
     let client = match helix_from_env() {
         Ok(c) => c,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "helix connect failed").into_response()
+            return (StatusCode::INTERNAL_SERVER_ERROR, "helix connect failed").into_response();
         }
     };
 
     let provider = match client.get_provider(&flow.provider_id).await {
         Ok(Some(p)) => p,
-        _ => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "provider lookup failed",
-            )
-                .into_response()
-        }
+        _ => return (StatusCode::INTERNAL_SERVER_ERROR, "provider lookup failed").into_response(),
     };
 
     let secret_path = format!("secret/data/providers/{}", flow.provider_id);
@@ -428,7 +429,7 @@ async fn oauth_callback_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("bao read client_secret: {e}"),
             )
-                .into_response()
+                .into_response();
         }
     };
     let client_secret = match provider_secret.get_str("client_secret") {
@@ -438,7 +439,7 @@ async fn oauth_callback_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "no client_secret in OpenBao",
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -462,7 +463,7 @@ async fn oauth_callback_handler(
                 StatusCode::BAD_GATEWAY,
                 format!("token exchange request: {e}"),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -477,9 +478,7 @@ async fn oauth_callback_handler(
 
     let token_data: serde_json::Value = match token_resp.json().await {
         Ok(v) => v,
-        Err(e) => {
-            return (StatusCode::BAD_GATEWAY, format!("token parse: {e}")).into_response()
-        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("token parse: {e}")).into_response(),
     };
 
     let mut secret_map = serde_json::Map::new();
@@ -499,7 +498,11 @@ async fn oauth_callback_handler(
     }
 
     oauth.flows.lock().await.remove(&q.state);
-    (StatusCode::OK, "Authorization complete! You can close this window.").into_response()
+    (
+        StatusCode::OK,
+        "Authorization complete! You can close this window.",
+    )
+        .into_response()
 }
 
 /// `GET /oauth/status/:cred_id` — Check if an OAuth credential is ready.

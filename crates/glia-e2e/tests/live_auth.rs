@@ -3,7 +3,7 @@
 
 mod common;
 
-use glia_auth::{AuthError, AuthWaiter, AUTH_TIMEOUT};
+use glia_auth::{AUTH_TIMEOUT, AuthError, AuthWaiter};
 use std::time::Duration;
 
 #[tokio::test]

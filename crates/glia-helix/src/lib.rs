@@ -426,7 +426,8 @@ mod tests {
 
     #[test]
     fn connect_with_api_key_stores_it() {
-        let client = HelixClient::connect(Some("http://127.0.0.1:6969"), Some("secret-key")).unwrap();
+        let client =
+            HelixClient::connect(Some("http://127.0.0.1:6969"), Some("secret-key")).unwrap();
         assert_eq!(client.base_url(), "http://127.0.0.1:6969");
         // api_key is private; we can't assert its value directly, but
         // we can verify the client was constructed without error.

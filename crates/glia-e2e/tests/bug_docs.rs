@@ -76,7 +76,10 @@ async fn bug_cache_ttl_zero_divergence() {
     let c = InMemoryCache::new();
     c.put_bytes("k", b"v", Duration::ZERO).await.unwrap();
     let in_mem = c.get_bytes("k").await.unwrap();
-    assert!(in_mem.is_none(), "in-memory TTL=0 should expire immediately");
+    assert!(
+        in_mem.is_none(),
+        "in-memory TTL=0 should expire immediately"
+    );
     let _ = RedisCache::connect("redis://127.0.0.1:6379/0").await;
 }
 

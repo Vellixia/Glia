@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{redis_live, REDIS_URL};
+use common::{REDIS_URL, redis_live};
 use glia_cache::{Cache, RedisCache};
 use std::time::Duration;
 
@@ -26,7 +26,10 @@ async fn redis_put_get_delete_round_trip_live() {
     let cache = RedisCache::connect(REDIS_URL).await.unwrap();
     let key = format!("glia::e2e::{}", chrono::Utc::now().timestamp());
 
-    cache.put_bytes(&key, b"e2e-value", Duration::from_secs(60)).await.unwrap();
+    cache
+        .put_bytes(&key, b"e2e-value", Duration::from_secs(60))
+        .await
+        .unwrap();
     let got = cache.get_bytes(&key).await.unwrap();
     assert_eq!(got.as_deref(), Some(&b"e2e-value"[..]));
 
@@ -45,7 +48,10 @@ async fn redis_ttl_expiry_live() {
     let key = format!("glia::e2e::ttl-{}", chrono::Utc::now().timestamp());
 
     // Put with 1-second TTL (minimum for Redis).
-    cache.put_bytes(&key, b"expires-soon", Duration::from_secs(1)).await.unwrap();
+    cache
+        .put_bytes(&key, b"expires-soon", Duration::from_secs(1))
+        .await
+        .unwrap();
     assert!(cache.get_bytes(&key).await.unwrap().is_some());
 
     // Wait for expiry.
@@ -85,7 +91,10 @@ async fn redis_large_value_round_trip_live() {
     let key = format!("glia::e2e::large-{}", chrono::Utc::now().timestamp());
     let large_value = vec![0xABu8; 100_000]; // 100KB
 
-    cache.put_bytes(&key, &large_value, Duration::from_secs(60)).await.unwrap();
+    cache
+        .put_bytes(&key, &large_value, Duration::from_secs(60))
+        .await
+        .unwrap();
     let got = cache.get_bytes(&key).await.unwrap();
     assert_eq!(got.as_deref(), Some(large_value.as_slice()));
     cache.delete(&key).await.unwrap();
@@ -98,9 +107,15 @@ async fn redis_unicode_key_round_trip_live() {
         return;
     }
     let cache = RedisCache::connect(REDIS_URL).await.unwrap();
-    let key = format!("glia::e2e::héllo::日本語-{}", chrono::Utc::now().timestamp());
+    let key = format!(
+        "glia::e2e::héllo::日本語-{}",
+        chrono::Utc::now().timestamp()
+    );
 
-    cache.put_bytes(&key, b"unicode-key-value", Duration::from_secs(60)).await.unwrap();
+    cache
+        .put_bytes(&key, b"unicode-key-value", Duration::from_secs(60))
+        .await
+        .unwrap();
     let got = cache.get_bytes(&key).await.unwrap();
     assert_eq!(got.as_deref(), Some(&b"unicode-key-value"[..]));
     cache.delete(&key).await.unwrap();

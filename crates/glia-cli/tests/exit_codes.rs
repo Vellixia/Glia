@@ -9,9 +9,8 @@ use predicates::prelude::*;
 use std::path::PathBuf;
 
 fn glia() -> Command {
-    Command::cargo_bin("glia").unwrap_or_else(|_| {
-        panic!("glia binary not found — run cargo build -p glia-cli first")
-    })
+    Command::cargo_bin("glia")
+        .unwrap_or_else(|_| panic!("glia binary not found — run cargo build -p glia-cli first"))
 }
 
 fn temp_dir() -> PathBuf {
@@ -46,12 +45,7 @@ fn action_hub_unreachable_exits_nonzero() {
 #[test]
 fn save_skill_hub_unreachable_exits_nonzero() {
     glia()
-        .args([
-            "save-skill",
-            "test skill",
-            "--hub",
-            "http://127.0.0.1:1",
-        ])
+        .args(["save-skill", "test skill", "--hub", "http://127.0.0.1:1"])
         .assert()
         .failure();
 }
@@ -96,12 +90,7 @@ fn chunk_ingest_hub_unreachable_exits_nonzero() {
 fn chunk_ingest_no_skills_dir_exits_0() {
     let dir = temp_dir();
     glia()
-        .args([
-            "chunk",
-            "ingest",
-            "--repo-root",
-            dir.to_str().unwrap(),
-        ])
+        .args(["chunk", "ingest", "--repo-root", dir.to_str().unwrap()])
         .assert()
         .success();
     let _ = std::fs::remove_dir_all(&dir);
@@ -161,12 +150,7 @@ fn chunk_ingest_no_md_files_exits_0() {
     // Only a non-md file.
     std::fs::write(dir.join("skills/readme.txt"), "text").unwrap();
     glia()
-        .args([
-            "chunk",
-            "ingest",
-            "--repo-root",
-            dir.to_str().unwrap(),
-        ])
+        .args(["chunk", "ingest", "--repo-root", dir.to_str().unwrap()])
         .assert()
         .success();
     let _ = std::fs::remove_dir_all(&dir);
@@ -180,12 +164,7 @@ fn chunk_ingest_skips_readme_md() {
     // Should exit 0 — README is skipped, so 0 chunks ingested (or graceful
     // skip if embed model missing).
     glia()
-        .args([
-            "chunk",
-            "ingest",
-            "--repo-root",
-            dir.to_str().unwrap(),
-        ])
+        .args(["chunk", "ingest", "--repo-root", dir.to_str().unwrap()])
         .assert()
         .success();
     let _ = std::fs::remove_dir_all(&dir);
@@ -241,12 +220,7 @@ fn cli_chunk_ingest_no_flags_accepted() {
     // always processes all .md files in skills/.
     let dir = temp_dir();
     glia()
-        .args([
-            "chunk",
-            "ingest",
-            "--repo-root",
-            dir.to_str().unwrap(),
-        ])
+        .args(["chunk", "ingest", "--repo-root", dir.to_str().unwrap()])
         .assert()
         .success();
     let _ = std::fs::remove_dir_all(&dir);

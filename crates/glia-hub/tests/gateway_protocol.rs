@@ -29,7 +29,9 @@ fn ws_url(base: &str) -> String {
 #[tokio::test]
 async fn ws_empty_text_frame_is_echoed() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     ws.send(Message::text("")).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
     assert!(msg.is_text());
@@ -39,7 +41,9 @@ async fn ws_empty_text_frame_is_echoed() {
 #[tokio::test]
 async fn ws_binary_frame_is_echoed() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     ws.send(Message::binary(vec![1, 2, 3])).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
     assert!(msg.is_binary());
@@ -49,7 +53,9 @@ async fn ws_binary_frame_is_echoed() {
 #[tokio::test]
 async fn ws_rapid_fire_100_messages_all_echoed_in_order() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     for i in 0..100 {
         let line = format!("msg-{i:03}");
         ws.send(Message::text(line.clone())).await.unwrap();
@@ -61,7 +67,9 @@ async fn ws_rapid_fire_100_messages_all_echoed_in_order() {
 #[tokio::test]
 async fn ws_immediate_disconnect_no_messages_clean() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     ws.send(Message::Close(None)).await.unwrap();
     // The server should close cleanly.
     let _ = ws.next().await;
@@ -70,7 +78,9 @@ async fn ws_immediate_disconnect_no_messages_clean() {
 #[tokio::test]
 async fn ws_close_frame_with_payload_breaks_connection() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     // Send a close with code 1000 (normal closure).
     ws.send(Message::Close(Some(
         tokio_tungstenite::tungstenite::protocol::CloseFrame {
@@ -78,7 +88,8 @@ async fn ws_close_frame_with_payload_breaks_connection() {
             reason: "test done".into(),
         },
     )))
-    .await.unwrap();
+    .await
+    .unwrap();
     // Should receive close back or stream end.
     let next = ws.next().await;
     // Either Close or None is acceptable.
@@ -88,7 +99,9 @@ async fn ws_close_frame_with_payload_breaks_connection() {
 #[tokio::test]
 async fn ws_non_json_text_echoed_without_validation() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     ws.send(Message::text("not json at all")).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
     assert_eq!(msg.into_text().unwrap(), "not json at all");
@@ -98,7 +111,9 @@ async fn ws_non_json_text_echoed_without_validation() {
 async fn ws_json_missing_fields_echoed_not_rejected() {
     // The Hub is an echo server — no schema validation.
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     let bad_json = r#"{"intent": "test"}"#; // missing other fields
     ws.send(Message::text(bad_json)).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
@@ -108,7 +123,9 @@ async fn ws_json_missing_fields_echoed_not_rejected() {
 #[tokio::test]
 async fn ws_json_extra_fields_echoed_not_rejected() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     let extra_json = r#"{"intent":"x","unknown_field":123}"#;
     ws.send(Message::text(extra_json)).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
@@ -118,7 +135,9 @@ async fn ws_json_extra_fields_echoed_not_rejected() {
 #[tokio::test]
 async fn ws_json_wrong_types_echoed_not_rejected() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     let wrong_types = r#"{"intent": 12345}"#; // int instead of string
     ws.send(Message::text(wrong_types)).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();
@@ -148,7 +167,9 @@ async fn ws_10_concurrent_connections_all_echo() {
 #[tokio::test]
 async fn ws_large_text_frame_64kb_echoes() {
     let base = spawn_hub().await;
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base)).await.unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url(&base))
+        .await
+        .unwrap();
     let large = "x".repeat(64 * 1024);
     ws.send(Message::text(large.clone())).await.unwrap();
     let msg = ws.next().await.unwrap().unwrap();

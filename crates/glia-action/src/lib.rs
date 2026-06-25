@@ -173,8 +173,8 @@ impl Executor for RoutingExecutor {
 
         if tool.local {
             let patterns: Vec<&str> = self.allow_patterns.iter().map(String::as_str).collect();
-            let cfg = glia_bash::BashConfig::new(&self.root, &patterns)
-                .map_err(|e| e.to_string())?;
+            let cfg =
+                glia_bash::BashConfig::new(&self.root, &patterns).map_err(|e| e.to_string())?;
             // Derive the command from the runtime + tool name, or just echo.
             let command = match &tool.runtime {
                 Some(rt) => format!("{rt} {}", tool.name),
@@ -247,9 +247,7 @@ impl UsageStore {
                 continue;
             }
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if let (Some(source), Some(count)) =
-                    (v["source"].as_str(), v["count"].as_u64())
-                {
+                if let (Some(source), Some(count)) = (v["source"].as_str(), v["count"].as_u64()) {
                     counts.insert(source.to_owned(), count as u32);
                 }
             }
@@ -295,9 +293,7 @@ pub fn rank_skills_weighted(
         .iter()
         .map(|s| {
             let base = cosine(query_vec, &s.embedding);
-            let boost = usage.map_or(1.0, |u| {
-                1.0 + ALPHA * (u.get(&s.source) as f32).ln_1p()
-            });
+            let boost = usage.map_or(1.0, |u| 1.0 + ALPHA * (u.get(&s.source) as f32).ln_1p());
             SkillMatch {
                 id: format!("skill::{}", s.source),
                 content: s.content.clone(),
@@ -412,7 +408,9 @@ impl Action {
                 .into_iter()
                 .filter(|s| ids.contains(&s.source))
                 .collect();
-            Ok(rank_skills_weighted(query_vec, &filtered, self.top_k, usage))
+            Ok(rank_skills_weighted(
+                query_vec, &filtered, self.top_k, usage,
+            ))
         } else {
             Ok(rank_skills_weighted(query_vec, &all, self.top_k, usage))
         }
@@ -734,7 +732,10 @@ mod tests {
     #[test]
     fn empty_query_classifies_local() {
         assert_eq!(
-            classify(&Intent { query: "".into(), stack: None }),
+            classify(&Intent {
+                query: "".into(),
+                stack: None
+            }),
             IntentKind::Local
         );
     }
@@ -742,7 +743,10 @@ mod tests {
     #[test]
     fn whitespace_query_classifies_local() {
         assert_eq!(
-            classify(&Intent { query: "   ".into(), stack: None }),
+            classify(&Intent {
+                query: "   ".into(),
+                stack: None
+            }),
             IntentKind::Local
         );
     }
@@ -750,11 +754,17 @@ mod tests {
     #[test]
     fn unicode_emoji_query_classification() {
         assert_eq!(
-            classify(&Intent { query: "create linear issue 🎫".into(), stack: None }),
+            classify(&Intent {
+                query: "create linear issue 🎫".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
         assert_eq!(
-            classify(&Intent { query: "cat 📄 file".into(), stack: None }),
+            classify(&Intent {
+                query: "cat 📄 file".into(),
+                stack: None
+            }),
             IntentKind::Local
         );
     }
@@ -762,7 +772,10 @@ mod tests {
     #[test]
     fn case_insensitive_linear_substring_match() {
         assert_eq!(
-            classify(&Intent { query: "LinearCase".into(), stack: None }),
+            classify(&Intent {
+                query: "LinearCase".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
     }
@@ -770,7 +783,10 @@ mod tests {
     #[test]
     fn capitalized_linear_classifies_remote() {
         assert_eq!(
-            classify(&Intent { query: "Linear issue".into(), stack: None }),
+            classify(&Intent {
+                query: "Linear issue".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
     }
@@ -779,7 +795,10 @@ mod tests {
     fn mixed_local_remote_markers_remote_wins() {
         // Contains both "cat" (local hint) and "linear" (remote marker).
         assert_eq!(
-            classify(&Intent { query: "cat the linear issue".into(), stack: None }),
+            classify(&Intent {
+                query: "cat the linear issue".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
     }
@@ -787,7 +806,10 @@ mod tests {
     #[test]
     fn oauth_marker_classifies_remote() {
         assert_eq!(
-            classify(&Intent { query: "oauth flow".into(), stack: None }),
+            classify(&Intent {
+                query: "oauth flow".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
     }
@@ -798,7 +820,10 @@ mod tests {
             "linear", "github", "notion", "slack", "supabase", "stripe", "jira", "oauth",
         ] {
             assert_eq!(
-                classify(&Intent { query: format!("test {marker} here"), stack: None }),
+                classify(&Intent {
+                    query: format!("test {marker} here"),
+                    stack: None
+                }),
                 IntentKind::Remote,
                 "marker '{marker}' should classify as Remote"
             );
@@ -892,7 +917,9 @@ mod tests {
 
     #[test]
     fn stub_executor_empty_response() {
-        let exec = StubExecutor { response: String::new() };
+        let exec = StubExecutor {
+            response: String::new(),
+        };
         // Just verify it doesn't panic — actual exec is async.
         assert!(exec.response.is_empty());
     }
@@ -923,7 +950,10 @@ mod tests {
     #[test]
     fn runtime_missing_outcome_round_trips() {
         let r = ActionResult {
-            intent: Intent { query: "uvx foo".into(), stack: None },
+            intent: Intent {
+                query: "uvx foo".into(),
+                stack: None,
+            },
             kind: IntentKind::Local,
             skills: vec![],
             tools: vec![],
@@ -937,7 +967,9 @@ mod tests {
         };
         let s = serde_json::to_string(&r).unwrap();
         let back: ActionResult = serde_json::from_str(&s).unwrap();
-        assert!(matches!(back.outcome, Outcome::RuntimeMissing { runtime, .. } if runtime == "uvx"));
+        assert!(
+            matches!(back.outcome, Outcome::RuntimeMissing { runtime, .. } if runtime == "uvx")
+        );
     }
 
     #[test]
@@ -945,19 +977,31 @@ mod tests {
         use IntentKind;
         // Full unicode + emoji coverage.
         assert_eq!(
-            classify(&Intent { query: "create linear issue 🎫".into(), stack: None }),
+            classify(&Intent {
+                query: "create linear issue 🎫".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
         assert_eq!(
-            classify(&Intent { query: "cat 📄 file.txt".into(), stack: None }),
+            classify(&Intent {
+                query: "cat 📄 file.txt".into(),
+                stack: None
+            }),
             IntentKind::Local
         );
         assert_eq!(
-            classify(&Intent { query: "日本語のファイルを開く".into(), stack: None }),
+            classify(&Intent {
+                query: "日本語のファイルを開く".into(),
+                stack: None
+            }),
             IntentKind::Local
         );
         assert_eq!(
-            classify(&Intent { query: "créer un ticket linear".into(), stack: None }),
+            classify(&Intent {
+                query: "créer un ticket linear".into(),
+                stack: None
+            }),
             IntentKind::Remote
         );
     }
@@ -998,7 +1042,8 @@ mod tests {
 
     #[test]
     fn usage_store_from_malformed_line_skips_it() {
-        let jsonl = "{\"source\":\"a\",\"count\":3}\n{not valid json}\n{\"source\":\"b\",\"count\":1}\n";
+        let jsonl =
+            "{\"source\":\"a\",\"count\":3}\n{not valid json}\n{\"source\":\"b\",\"count\":1}\n";
         let store = UsageStore::from_jsonl(jsonl);
         assert_eq!(store.get("a"), 3);
         assert_eq!(store.get("b"), 1);
@@ -1033,8 +1078,18 @@ mod tests {
     fn rank_skills_with_no_usage_same_as_rank_skills() {
         let q = vec![1.0_f32, 0.0];
         let skills = vec![
-            Skill { source: "a".into(), content: "x".into(), embedding: vec![0.9, 0.436], updated_at: "t".into() },
-            Skill { source: "b".into(), content: "y".into(), embedding: vec![1.0, 0.0], updated_at: "t".into() },
+            Skill {
+                source: "a".into(),
+                content: "x".into(),
+                embedding: vec![0.9, 0.436],
+                updated_at: "t".into(),
+            },
+            Skill {
+                source: "b".into(),
+                content: "y".into(),
+                embedding: vec![1.0, 0.0],
+                updated_at: "t".into(),
+            },
         ];
         let plain = rank_skills(&q, &skills, 2);
         let weighted = rank_skills_weighted(&q, &skills, 2, None);

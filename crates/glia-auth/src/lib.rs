@@ -427,11 +427,7 @@ mod tests {
         let waiter = spawn_waiter(0).await;
         let port = waiter.addr().port();
         let url = format!("http://127.0.0.1:{}/callback?code=x&state=y", port);
-        let resp = reqwest::Client::new()
-            .post(&url)
-            .send()
-            .await
-            .unwrap();
+        let resp = reqwest::Client::new().post(&url).send().await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
         waiter.shutdown().await;
     }

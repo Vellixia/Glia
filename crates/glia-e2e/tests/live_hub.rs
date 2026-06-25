@@ -30,7 +30,9 @@ async fn hub_ws_echo_binary_live() {
     let (base, _handle) = spawn_hub().await;
     let ws_url = base.replacen("http://", "ws://", 1) + "/gateway";
     let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
-    ws.send(Message::binary(vec![0xDE, 0xAD, 0xBE, 0xEF])).await.unwrap();
+    ws.send(Message::binary(vec![0xDE, 0xAD, 0xBE, 0xEF]))
+        .await
+        .unwrap();
     let msg = ws.next().await.unwrap().unwrap();
     assert_eq!(msg.into_data(), vec![0xDE, 0xAD, 0xBE, 0xEF]);
 }
@@ -89,7 +91,9 @@ async fn hub_healthz_concurrent_live() {
 #[tokio::test]
 async fn hub_404_for_unknown_path_live() {
     let (base, _handle) = spawn_hub().await;
-    let resp = reqwest::get(&format!("{base}/api/v1/nonexistent")).await.unwrap();
+    let resp = reqwest::get(&format!("{base}/api/v1/nonexistent"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 }
 

@@ -40,7 +40,9 @@ async fn healthz_trailing_slash_returns_404() {
 #[tokio::test]
 async fn healthz_query_params_ignored_returns_200() {
     let base = spawn_hub().await;
-    let resp = reqwest::get(format!("{base}/healthz?foo=bar")).await.unwrap();
+    let resp = reqwest::get(format!("{base}/healthz?foo=bar"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
 }
 
@@ -96,6 +98,8 @@ async fn healthz_50_concurrent_gets_all_200() {
 #[tokio::test]
 async fn nonexistent_path_returns_404() {
     let base = spawn_hub().await;
-    let resp = reqwest::get(format!("{base}/api/v1/something")).await.unwrap();
+    let resp = reqwest::get(format!("{base}/api/v1/something"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 }

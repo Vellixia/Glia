@@ -423,7 +423,9 @@ mod tests {
     #[tokio::test]
     async fn empty_string_key_put_get() {
         let c = InMemoryCache::new();
-        c.put_bytes("", b"empty-key-val", DEFAULT_TTL).await.unwrap();
+        c.put_bytes("", b"empty-key-val", DEFAULT_TTL)
+            .await
+            .unwrap();
         assert_eq!(
             c.get_bytes("").await.unwrap(),
             Some(b"empty-key-val".to_vec())
@@ -538,12 +540,11 @@ mod tests {
     async fn get_typed_corrupted_bytes_returns_serde_error() {
         let c = InMemoryCache::new();
         // Put raw invalid JSON bytes.
-        c.put_bytes("bad", b"{not valid json", DEFAULT_TTL).await.unwrap();
+        c.put_bytes("bad", b"{not valid json", DEFAULT_TTL)
+            .await
+            .unwrap();
         let result: Result<Option<CachedValue<String>>, _> = get_typed(&c, "bad").await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CacheError::Serde(_)
-        ));
+        assert!(matches!(result.unwrap_err(), CacheError::Serde(_)));
     }
 }

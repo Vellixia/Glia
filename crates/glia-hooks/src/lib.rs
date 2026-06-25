@@ -205,9 +205,7 @@ pub async fn generate_claude_hooks(
         build_claude_hook("Edit", stacks),
         build_claude_hook("Write", stacks),
     ];
-    let post_hooks = vec![
-        build_review_capture_hook("Write"),
-    ];
+    let post_hooks = vec![build_review_capture_hook("Write")];
     let claude_dir = repo_root.join(".claude");
     tokio::fs::create_dir_all(&claude_dir).await?;
     let path = claude_dir.join("settings.json");
@@ -307,7 +305,9 @@ pub async fn register_mcp_bridge(repo_root: &Path) -> Result<Vec<String>, HookEr
     tokio::fs::create_dir_all(&claude_dir).await?;
     let claude_path = claude_dir.join("settings.json");
     let existing = if claude_path.exists() {
-        tokio::fs::read_to_string(&claude_path).await.unwrap_or_default()
+        tokio::fs::read_to_string(&claude_path)
+            .await
+            .unwrap_or_default()
     } else {
         String::new()
     };
@@ -320,7 +320,9 @@ pub async fn register_mcp_bridge(repo_root: &Path) -> Result<Vec<String>, HookEr
     tokio::fs::create_dir_all(&cursor_dir).await?;
     let cursor_path = cursor_dir.join("mcp.json");
     let existing_cursor = if cursor_path.exists() {
-        tokio::fs::read_to_string(&cursor_path).await.unwrap_or_default()
+        tokio::fs::read_to_string(&cursor_path)
+            .await
+            .unwrap_or_default()
     } else {
         String::new()
     };
@@ -557,29 +559,31 @@ mod tests {
         generate_claude_hooks(&tmp, &["nextjs".into()])
             .await
             .unwrap();
-        let first = tokio::fs::read_to_string(
-            tmp.join(".claude").join("settings.json"),
-        )
-        .await
-        .unwrap();
+        let first = tokio::fs::read_to_string(tmp.join(".claude").join("settings.json"))
+            .await
+            .unwrap();
         generate_claude_hooks(&tmp, &["nextjs".into()])
             .await
             .unwrap();
-        let second = tokio::fs::read_to_string(
-            tmp.join(".claude").join("settings.json"),
-        )
-        .await
-        .unwrap();
+        let second = tokio::fs::read_to_string(tmp.join(".claude").join("settings.json"))
+            .await
+            .unwrap();
         // PreToolUse: 2 occurrences of "glia context" (Edit + Write).
         let first_pre = first.matches("glia context").count();
         let second_pre = second.matches("glia context").count();
         assert_eq!(first_pre, 2, "first run should have 2 pre-tool-use hooks");
-        assert_eq!(second_pre, 2, "second run should not duplicate pre-tool-use hooks");
+        assert_eq!(
+            second_pre, 2,
+            "second run should not duplicate pre-tool-use hooks"
+        );
         // PostToolUse: 1 "glia review capture" hook (Write).
         let first_post = first.matches("glia review capture").count();
         let second_post = second.matches("glia review capture").count();
         assert_eq!(first_post, 1, "first run should have 1 post-tool-use hook");
-        assert_eq!(second_post, 1, "second run should not duplicate post-tool-use hooks");
+        assert_eq!(
+            second_post, 1,
+            "second run should not duplicate post-tool-use hooks"
+        );
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
@@ -717,7 +721,10 @@ mod tests {
         .to_string();
         let out = merge_mcp_into_json(&existing);
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert!(v["mcpServers"]["other-server"].is_object(), "other server preserved");
+        assert!(
+            v["mcpServers"]["other-server"].is_object(),
+            "other server preserved"
+        );
         assert!(v["mcpServers"]["glia-bridge"].is_object(), "bridge added");
     }
 
@@ -750,14 +757,20 @@ mod tests {
             .await
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&claude_settings).unwrap();
-        assert_eq!(v["mcpServers"]["glia-bridge"]["command"].as_str(), Some("glia"));
+        assert_eq!(
+            v["mcpServers"]["glia-bridge"]["command"].as_str(),
+            Some("glia")
+        );
 
         // Cursor mcp.json
         let cursor_mcp = tokio::fs::read_to_string(tmp.join(".cursor/mcp.json"))
             .await
             .unwrap();
         let v2: serde_json::Value = serde_json::from_str(&cursor_mcp).unwrap();
-        assert_eq!(v2["mcpServers"]["glia-bridge"]["command"].as_str(), Some("glia"));
+        assert_eq!(
+            v2["mcpServers"]["glia-bridge"]["command"].as_str(),
+            Some("glia")
+        );
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
@@ -765,7 +778,9 @@ mod tests {
     #[tokio::test]
     async fn register_mcp_bridge_merges_with_existing_claude_settings() {
         let tmp = std::env::temp_dir().join(format!("glia-hooks-mcp-merge-{}", uuid_v4()));
-        tokio::fs::create_dir_all(tmp.join(".claude")).await.unwrap();
+        tokio::fs::create_dir_all(tmp.join(".claude"))
+            .await
+            .unwrap();
 
         // Pre-existing claude settings with a custom hook.
         let existing = serde_json::json!({
@@ -805,10 +820,7 @@ mod tests {
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
         // Only one glia-bridge entry.
-        assert_eq!(
-            v["mcpServers"].as_object().map(|o| o.len()).unwrap_or(0),
-            1
-        );
+        assert_eq!(v["mcpServers"].as_object().map(|o| o.len()).unwrap_or(0), 1);
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
