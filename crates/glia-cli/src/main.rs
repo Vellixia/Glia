@@ -209,6 +209,10 @@ pub enum Cmd {
         #[arg(long, env = "GLIA_HUB_TOKEN")]
         token: Option<String>,
     },
+    /// Print runtime dependency status — which runtimes (npx, uvx, docker)
+    /// are available on PATH and which are missing. Exit 0 if all present,
+    /// exit 1 if any missing (so CI can gate on it).
+    Doctor,
 }
 
 /// `glia chunk` subcommands.
@@ -356,6 +360,7 @@ async fn main() -> anyhow::Result<()> {
             hub,
             token,
         } => run_context(stacks, file, hub, token).await,
+        Cmd::Doctor => run_doctor().await,
     };
     // Map error categories to specific exit codes per SPEC V14/V15.
     match result {
@@ -1067,6 +1072,44 @@ async fn run_review(
             let item = queue.reject(&id).await?;
             println!("Rejected review item {} for '{}'.", item.id, item.file_path);
         }
+    }
+    Ok(())
+}
+
+/// `glia doctor` — probe runtime availability and print a status table.
+///
+/// Exit 0 if all runtimes are found, exit 1 if any are missing so CI can gate.
+async fn run_doctor() -> anyhow::Result<()> {
+    use glia_sandbox::{probe_runtimes, Runtime};
+
+    let runtimes = [Runtime::Npx, Runtime::Uvx, Runtime::Docker];
+    let results = probe_runtimes(&runtimes);
+
+    let mut any_missing = false;
+    println!("{:<10} {}", "RUNTIME", "STATUS");
+    println!("{}", "-".repeat(22));
+    for r in &results {
+        let status = if r.found { "ok" } else { "MISSING" };
+        println!("{:<10} {}", r.runtime.binary(), status);
+        if !r.found {
+            any_missing = true;
+        }
+    }
+
+    // Embed model assets.
+    let embed_ok = glia_embed::Embedder::try_new().is_some();
+    println!(
+        "{:<10} {}",
+        "embed",
+        if embed_ok { "ok" } else { "MISSING (run `glia init`)" }
+    );
+    if !embed_ok {
+        any_missing = true;
+    }
+
+    if any_missing {
+        eprintln!("\nSome dependencies are missing. Agent actions requiring them will return Outcome::RuntimeMissing.");
+        std::process::exit(1);
     }
     Ok(())
 }

@@ -148,6 +148,10 @@ async fn exit_code_0_returns_ok() {
 }
 
 #[tokio::test]
+// Windows console defaults to CP1252/CP850; `echo` output encoding is
+// platform-dependent. The argv-exec Unicode path is covered by
+// `unicode_bash_command_string`. Skip here rather than fight code pages.
+#[cfg_attr(windows, ignore)]
 async fn unicode_command_runs() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = BashConfig::default_safe(tmp.path()).unwrap();
