@@ -57,6 +57,9 @@ pub struct InitResult {
     /// `true` if no git repo found at `repo_root` (hooks skipped).
     #[serde(default)]
     pub git_repo_missing: bool,
+    /// Agent config files that received the `glia-bridge` MCP entry.
+    #[serde(default)]
+    pub mcp_registered: Vec<String>,
 }
 
 /// Scan a repo for tech stacks.
@@ -214,18 +217,26 @@ pub fn pending_auth_for_stacks(stacks: &[DetectedStack]) -> Vec<String> {
     creds
 }
 
-/// Run full `glia init` scan + hook install.
+/// Run full `glia init` scan + hook install + MCP bridge registration.
 pub async fn run(repo_root: &Path) -> Result<InitResult, InitError> {
     let stacks = scan_repo(repo_root).await?;
     let files_scanned = count_files(repo_root, 1000).await?;
     let pending_auth = pending_auth_for_stacks(&stacks);
     let (hooks_installed, git_repo_missing) = install_hooks(repo_root).await?;
+    let mcp_registered = match glia_hooks::register_mcp_bridge(repo_root).await {
+        Ok(paths) => paths,
+        Err(e) => {
+            tracing::warn!(error = %e, "mcp bridge registration failed");
+            Vec::new()
+        }
+    };
     Ok(InitResult {
         stacks,
         pending_auth,
         files_scanned,
         hooks_installed,
         git_repo_missing,
+        mcp_registered,
     })
 }
 
@@ -410,6 +421,46 @@ mod tests {
         assert!(result.pending_auth.contains(&"supabase".to_string()));
         assert!(result.files_scanned >= 2);
         assert!(result.git_repo_missing);
+        // MCP bridge should be registered for both agents.
+        assert!(
+            !result.mcp_registered.is_empty(),
+            "mcp_registered should not be empty"
+        );
+        assert!(
+            result.mcp_registered.iter().any(|p| p.contains("settings.json")),
+            "Claude Code settings.json should be in mcp_registered"
+        );
+        assert!(
+            result.mcp_registered.iter().any(|p| p.contains("mcp.json")),
+            "Cursor mcp.json should be in mcp_registered"
+        );
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn run_registers_mcp_bridge_for_both_agents() {
+        let dir = tmp();
+        // Bare repo — no stack markers needed for MCP registration.
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let result = run(&dir).await.unwrap();
+        // Claude Code: .claude/settings.json must have mcpServers.glia-bridge.
+        let claude_settings =
+            tokio::fs::read_to_string(dir.join(".claude/settings.json")).await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&claude_settings).unwrap();
+        assert!(
+            v["mcpServers"]["glia-bridge"]["command"].as_str() == Some("glia"),
+            "Claude Code MCP entry missing"
+        );
+        // Cursor: .cursor/mcp.json must have mcpServers.glia-bridge.
+        let cursor_mcp =
+            tokio::fs::read_to_string(dir.join(".cursor/mcp.json")).await.unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&cursor_mcp).unwrap();
+        assert!(
+            v2["mcpServers"]["glia-bridge"]["command"].as_str() == Some("glia"),
+            "Cursor MCP entry missing"
+        );
+        // mcp_registered field populated.
+        assert_eq!(result.mcp_registered.len(), 2);
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 

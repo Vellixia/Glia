@@ -34,6 +34,7 @@ async fn embedded_style_crud() {
         local: false,
         params_schema: serde_json::json!({"title": "string"}),
         updated_at: now(),
+        runtime: None,
     };
     db.upsert_tool(&tool_id, tool.clone()).await.unwrap();
 
@@ -61,6 +62,7 @@ async fn graph_edge_requires() {
             local: false,
             params_schema: serde_json::json!({}),
             updated_at: now(),
+            runtime: None,
         },
     )
     .await

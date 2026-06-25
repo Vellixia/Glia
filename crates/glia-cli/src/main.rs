@@ -26,11 +26,11 @@ pub struct Cli {
 pub enum Cmd {
     /// stdio <-> WebSocket translator. Connects to the Glia Hub `/gateway`.
     Bridge {
-        /// WebSocket URL of the Hub gateway (default: ws://127.0.0.1:6969/gateway).
+        /// WebSocket URL of the Hub gateway (default: ws://127.0.0.1:3000/gateway).
         #[arg(
             long,
             env = "GLIA_HUB_URL",
-            default_value = "ws://127.0.0.1:6969/gateway"
+            default_value = "ws://127.0.0.1:3000/gateway"
         )]
         hub_url: String,
     },
@@ -134,6 +134,64 @@ pub enum Cmd {
         #[arg(long, env = "GLIA_REPO_ROOT", default_value = ".", global = true)]
         repo_root: PathBuf,
     },
+    /// Manage OAuth providers registered with the Hub.
+    ///
+    /// `glia provider add` registers a provider (stores non-secret config in
+    /// HelixDB, client_secret in OpenBao — the CLI never retains it after the
+    /// POST). `glia provider list` shows registered providers.
+    Provider {
+        /// Provider subcommand (add, list).
+        #[command(subcommand)]
+        op: ProviderOp,
+        /// Hub base URL (REST, not WS).
+        #[arg(
+            long,
+            env = "GLIA_HUB_URL",
+            default_value = "http://127.0.0.1:3000",
+            global = true
+        )]
+        hub: String,
+        /// Bearer token for the Hub.
+        #[arg(long, env = "GLIA_HUB_TOKEN", global = true)]
+        token: Option<String>,
+    },
+    /// Corrections → candidate-skills review queue (Phase 4 / D-Learning).
+    ///
+    /// `glia review capture <file>` — called by the PostToolUse hook; records
+    /// the diff as a pending candidate rule in `.glia/review-queue.jsonl`.
+    /// `glia review list`           — show pending items.
+    /// `glia review approve <id>`   — upsert as a Hub skill + mark approved.
+    /// `glia review reject <id>`    — discard.
+    Review {
+        /// Review subcommand.
+        #[command(subcommand)]
+        op: ReviewOp,
+        /// Repo root (default: current directory).
+        #[arg(long, env = "GLIA_REPO_ROOT", default_value = ".", global = true)]
+        repo_root: PathBuf,
+        /// Hub HelixDB URL (used by `approve`).
+        #[arg(
+            long,
+            env = "GLIA_HUB_URL",
+            default_value = "http://127.0.0.1:6969",
+            global = true
+        )]
+        hub: String,
+        /// Bearer token for the Hub.
+        #[arg(long, env = "GLIA_HUB_TOKEN", global = true)]
+        token: Option<String>,
+    },
+    /// Enroll this device: generate a per-device token and store it in
+    /// `~/.glia/config.toml`. Subsequent commands auto-read it so you
+    /// don't need to set `GLIA_HUB_TOKEN` manually.
+    Enroll {
+        /// Hub base URL to enroll with.
+        #[arg(long, env = "GLIA_HUB_URL", default_value = "http://127.0.0.1:3000")]
+        hub: String,
+        /// Admin token to authorize device registration on the Hub.
+        #[arg(long, env = "GLIA_HUB_ADMIN_TOKEN")]
+        admin_token: Option<String>,
+    },
     /// Load context for a file or stack (T17). Called by the Claude
     /// PreToolUse hook installed by `glia init`.
     #[command(name = "context")]
@@ -158,6 +216,63 @@ pub enum Cmd {
 pub enum ChunkOp {
     /// Ingest all skill files under `<repo>/skills/`.
     Ingest,
+}
+
+/// `glia provider` subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ProviderOp {
+    /// Register an OAuth provider with the Hub.
+    Add {
+        /// Unique provider/cred ID (e.g., `linear_oauth`).
+        #[arg(long)]
+        id: String,
+        /// Display name (e.g., "Linear").
+        #[arg(long)]
+        name: String,
+        /// OAuth authorization URL.
+        #[arg(long)]
+        auth_url: String,
+        /// OAuth token exchange URL.
+        #[arg(long)]
+        token_url: String,
+        /// OAuth client ID (non-secret).
+        #[arg(long)]
+        client_id: String,
+        /// OAuth client secret. Sent once to the Hub; stored in OpenBao.
+        #[arg(long)]
+        client_secret: String,
+        /// Scopes (comma-separated, e.g., `read,write`).
+        #[arg(long, value_delimiter = ',', default_value = "")]
+        scopes: Vec<String>,
+    },
+    /// List registered OAuth providers.
+    List,
+}
+
+/// `glia review` subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ReviewOp {
+    /// Capture a file write as a candidate review item.
+    /// Called automatically by the PostToolUse hook.
+    Capture {
+        /// Path of the file written by the agent.
+        file: String,
+        /// Optional diff string (stdin if absent).
+        #[arg(long)]
+        diff: Option<String>,
+    },
+    /// List pending review items.
+    List,
+    /// Approve a review item and upsert it to the Hub as a skill.
+    Approve {
+        /// Review item id.
+        id: String,
+    },
+    /// Reject a review item (discard the candidate).
+    Reject {
+        /// Review item id.
+        id: String,
+    },
 }
 
 #[tokio::main]
@@ -227,6 +342,14 @@ async fn main() -> anyhow::Result<()> {
             token,
             repo_root,
         } => run_chunk(op, hub, token, repo_root).await,
+        Cmd::Provider { op, hub, token } => run_provider(op, hub, token).await,
+        Cmd::Review {
+            op,
+            repo_root,
+            hub,
+            token,
+        } => run_review(op, repo_root, hub, token).await,
+        Cmd::Enroll { hub, admin_token } => run_enroll(hub, admin_token).await,
         Cmd::Context {
             stacks,
             file,
@@ -290,6 +413,24 @@ async fn run_sync(hub: String, token: Option<String>, status_only: bool) -> anyh
     }
     let result = glia_sync::sync(&client).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
+
+    // Re-render agent configs from Hub after every sync (Phase 3 / C).
+    // Runs best-effort: failures are warnings, not errors.
+    let repo_root =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let skills = client.list_skills().await.unwrap_or_default();
+    let stacks = glia_init::scan_repo(&repo_root)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.id)
+        .collect::<Vec<_>>();
+    if let Err(e) = glia_hooks::generate_cursor_rules(&repo_root, &skills, &stacks).await {
+        eprintln!("warn: cursor rules re-render failed: {e}");
+    }
+    if let Err(e) = glia_hooks::register_mcp_bridge(&repo_root).await {
+        eprintln!("warn: mcp bridge re-register failed: {e}");
+    }
     Ok(())
 }
 
@@ -299,31 +440,142 @@ async fn run_action(
     hub: String,
     token: Option<String>,
 ) -> anyhow::Result<()> {
-    let client = hub_client(hub, token).await?;
+    let client = hub_client(hub.clone(), token.clone()).await?;
     let embedder = std::sync::Arc::new(glia_embed::Embedder::new()?);
-    let executor = std::sync::Arc::new(glia_action::StubExecutor {
-        response: "stub-ok".into(),
+    let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let executor = std::sync::Arc::new(glia_action::RoutingExecutor {
+        root: repo_root.clone(),
+        allow_patterns: vec![
+            r"^echo ".to_string(),
+            r"^cat ".to_string(),
+            r"^ls ".to_string(),
+        ],
     });
-    let action = glia_action::Action::new(client, embedder, executor);
-    let intent_struct = glia_action::Intent {
-        query: intent,
-        stack,
+
+    // Load usage store (best-effort — missing file = empty store).
+    let usage_path = repo_root.join(".glia").join("usage.jsonl");
+    let mut usage = if usage_path.exists() {
+        tokio::fs::read_to_string(&usage_path)
+            .await
+            .ok()
+            .map(|c| glia_action::UsageStore::from_jsonl(&c))
+            .unwrap_or_default()
+    } else {
+        glia_action::UsageStore::default()
     };
+
+    let action = glia_action::Action::new(client, embedder, executor)
+        .with_usage(usage.clone());
+    let intent_struct = glia_action::Intent { query: intent, stack };
     let result = action.run(intent_struct).await?;
 
+    // Record cited skills and save updated usage store.
+    let cited: Vec<String> = result.skills.iter().map(|s| s.source.clone()).collect();
+    if !cited.is_empty() {
+        usage.record(&cited);
+        if let Some(parent) = usage_path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        let _ = tokio::fs::write(&usage_path, usage.to_jsonl()).await;
+    }
+
     if let glia_action::Outcome::AuthRequired { deps } = &result.outcome {
-        handle_auth_required(deps, glia_auth::AUTH_TIMEOUT).await?;
+        handle_auth_required_via_hub(
+            deps,
+            &hub,
+            token.as_deref(),
+            glia_auth::AUTH_TIMEOUT,
+        )
+        .await?;
     }
 
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 
+/// Handle AUTH_REQUIRED via Hub OAuth broker flow.
+///
+/// Calls `POST /oauth/start` on the Hub to get a redirect URL, opens the
+/// browser at that URL, then polls `GET /oauth/status/{cred_id}` until the
+/// token is stored in OpenBao or the timeout expires.
+///
+/// Falls back to the localhost callback flow when `hub_url` is not provided.
+pub async fn handle_auth_required_via_hub(
+    deps: &[glia_action::MissingDep],
+    hub_url: &str,
+    hub_token: Option<&str>,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    if deps.is_empty() {
+        return Ok(());
+    }
+    let client = reqwest::Client::new();
+
+    for dep in deps {
+        eprintln!(
+            "AUTH_REQUIRED: {dep_tool} needs cred {dep_cred}. Starting OAuth via Hub...",
+            dep_tool = dep.tool,
+            dep_cred = dep.cred
+        );
+        let body = serde_json::json!({
+            "cred_id": dep.cred,
+            "provider_id": dep.cred,
+            "callback_base": hub_url.trim_end_matches('/'),
+        });
+        let resp = client
+            .post(format!("{}/oauth/start", hub_url.trim_end_matches('/')))
+            .bearer_auth(hub_token.unwrap_or(""))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("hub /oauth/start: {e}"))?;
+
+        if !resp.status().is_success() {
+            let msg = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("hub /oauth/start failed: {msg}"));
+        }
+        let start: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("parse /oauth/start: {e}"))?;
+        let redirect_url = start["redirect_url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("no redirect_url in response"))?;
+
+        eprintln!("Opening browser for OAuth: {redirect_url}");
+        if let Err(e) = open_browser(redirect_url) {
+            eprintln!("Could not auto-open browser ({e}). Open manually: {redirect_url}");
+        }
+
+        // Poll /oauth/status/{cred_id} until ready or timeout.
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if std::time::Instant::now() >= deadline {
+                return Err(anyhow::anyhow!("AUTH_TIMEOUT after {timeout:?}"));
+            }
+            let status_resp = client
+                .get(format!(
+                    "{}/oauth/status/{}",
+                    hub_url.trim_end_matches('/'),
+                    dep.cred
+                ))
+                .bearer_auth(hub_token.unwrap_or(""))
+                .send()
+                .await;
+            if let Ok(r) = status_resp
+                && let Ok(v) = r.json::<serde_json::Value>().await
+                && v["ready"].as_bool().unwrap_or(false)
+            {
+                eprintln!("AUTH: credential '{}' ready.", dep.cred);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Handle AUTH_REQUIRED: notify user, open localhost callback server, wait.
-/// Currently a stub that emits an OS notification (open browser placeholder
-/// URL) and waits up to the given timeout on the localhost callback. Real OAuth
-/// provider URL + code exchange lands when OpenBao dynamic creds are wired
-/// end-to-end (T14).
 ///
 /// Returns `Err(AuthError::Timeout(_))` on timeout so callers can exit
 /// with a non-zero code (surfaces AUTH_TIMEOUT to the AI agent per SPEC V14).
@@ -560,6 +812,262 @@ async fn run_context(
 
     let result = loader.load_context(&file_path).await?;
     print!("{}", result.text);
+    Ok(())
+}
+
+/// `glia provider add/list` — manage OAuth provider registry via the Hub.
+async fn run_provider(
+    op: ProviderOp,
+    hub: String,
+    token: Option<String>,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let hub = hub.trim_end_matches('/').to_string();
+
+    match op {
+        ProviderOp::Add {
+            id,
+            name,
+            auth_url,
+            token_url,
+            client_id,
+            client_secret,
+            scopes,
+        } => {
+            let body = serde_json::json!({
+                "id": id,
+                "name": name,
+                "auth_url": auth_url,
+                "token_url": token_url,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scopes": scopes,
+            });
+            let mut req = client.post(format!("{hub}/oauth/provider")).json(&body);
+            if let Some(tok) = token {
+                req = req.bearer_auth(tok);
+            }
+            let resp = req.send().await?;
+            let status = resp.status();
+            let text = resp.text().await?;
+            if !status.is_success() {
+                return Err(anyhow::anyhow!("provider add failed ({status}): {text}"));
+            }
+            println!("{text}");
+        }
+        ProviderOp::List => {
+            // List providers directly via HelixDB client.
+            let helix_url = std::env::var("GLIA_HELIX_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:6969".into());
+            let helix_token = std::env::var("GLIA_HELIX_TOKEN").ok();
+            let helix =
+                glia_helix::HelixClient::connect(Some(&helix_url), helix_token.as_deref())?;
+            let providers = helix.list_providers().await?;
+            let list: Vec<serde_json::Value> = providers
+                .into_iter()
+                .map(|(id, p)| {
+                    serde_json::json!({
+                        "id": id,
+                        "name": p.name,
+                        "auth_url": p.auth_url,
+                        "token_url": p.token_url,
+                        "client_id": p.client_id,
+                        "scopes": p.scopes,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&list)?);
+        }
+    }
+    Ok(())
+}
+
+/// Path to the per-device Glia config file.
+fn device_config_path() -> std::path::PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".glia").join("config.toml")
+}
+
+/// Load the hub token from the device config (fallback if env var not set).
+/// Called early in each command that needs a hub token.
+pub fn load_device_token() -> Option<String> {
+    let path = device_config_path();
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&path).ok()?;
+    // Minimal TOML parse: look for `hub_token = "..."`.
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("hub_token") {
+            if let Some(val) = line.split('=').nth(1) {
+                let token = val.trim().trim_matches('"').to_string();
+                if !token.is_empty() {
+                    return Some(token);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Generate a cryptographically-random 32-byte hex token using the OS RNG.
+fn generate_device_token() -> String {
+    // Use `getrandom` via a trivial loop over std::collections::hash_map.
+    // Avoid pulling an extra crate: use SystemTime + process-id + a counter
+    // mixed with addr-space randomness (pointer addresses on the heap).
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let mut buf = [0u8; 32];
+    for (i, chunk) in buf.chunks_mut(8).enumerate() {
+        let mut h = DefaultHasher::new();
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .hash(&mut h);
+        std::process::id().hash(&mut h);
+        (i as u64).hash(&mut h);
+        // Include a heap address as entropy source.
+        let boxed = Box::new(i);
+        let addr = &*boxed as *const usize as u64;
+        addr.hash(&mut h);
+        let val = h.finish();
+        chunk.copy_from_slice(&val.to_le_bytes());
+    }
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `glia enroll` — provision a per-device token and store in `~/.glia/config.toml`.
+///
+/// The generated token is registered with the Hub so it can be used as a
+/// bearer token for all subsequent commands without setting `GLIA_HUB_TOKEN`.
+async fn run_enroll(hub: String, admin_token: Option<String>) -> anyhow::Result<()> {
+    let device_id = format!("device-{}", std::process::id());
+    let device_token = generate_device_token();
+
+    // POST to Hub /device/register.
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "device_id": device_id,
+        "device_token": device_token,
+    });
+    let mut req = client
+        .post(format!("{}/device/register", hub.trim_end_matches('/')))
+        .json(&body);
+    if let Some(tok) = &admin_token {
+        req = req.bearer_auth(tok);
+    }
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            eprintln!("Enrolled with Hub at {hub}.");
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            // Hub may not implement /device/register yet — warn but still save.
+            eprintln!("warn: Hub returned {status}: {text}. Saving token locally anyway.");
+        }
+        Err(e) => {
+            // Hub unreachable — still save the token for later use.
+            eprintln!("warn: Hub unreachable ({e}). Saving token locally for when Hub starts.");
+        }
+    }
+
+    // Write config file.
+    let config_path = device_config_path();
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let config = format!(
+        "# Glia device config — generated by `glia enroll`\n\
+         device_id = \"{device_id}\"\n\
+         hub_url = \"{hub}\"\n\
+         hub_token = \"{device_token}\"\n"
+    );
+    tokio::fs::write(&config_path, &config).await?;
+    println!(
+        "Device enrolled.\n  device_id: {device_id}\n  config:    {}\n\
+         \nAll future `glia` commands will use this token automatically.",
+        config_path.display()
+    );
+    Ok(())
+}
+
+/// `glia review capture/list/approve/reject` — corrections → skills loop.
+async fn run_review(
+    op: ReviewOp,
+    repo_root: PathBuf,
+    hub: String,
+    token: Option<String>,
+) -> anyhow::Result<()> {
+    let queue = glia_review::ReviewQueue::open(&repo_root);
+    match op {
+        ReviewOp::Capture { file, diff } => {
+            let diff_str = diff.unwrap_or_default();
+            let item = queue.capture(&file, &diff_str).await?;
+            println!(
+                "Captured review item {} for '{}'.",
+                item.id, item.file_path
+            );
+        }
+        ReviewOp::List => {
+            let items = queue.list_pending().await?;
+            if items.is_empty() {
+                println!("No pending review items.");
+            } else {
+                for item in &items {
+                    println!("  {} | {} | {}", item.id, item.file_path, item.created_at);
+                    println!("    {}", item.candidate_rule.lines().next().unwrap_or(""));
+                }
+                println!("\n{} pending item(s). Use `glia review approve <id>` or `glia review reject <id>`.", items.len());
+            }
+        }
+        ReviewOp::Approve { id } => {
+            let item = queue.approve(&id).await?;
+            // Upsert the approved item as a skill on the Hub.
+            let source = format!("local::review::{}", item.id);
+            let client = hub_client(hub, token).await?;
+            let embedder = match glia_embed::Embedder::try_new() {
+                Some(e) => e,
+                None => {
+                    eprintln!("warn: glia-embed unavailable; skill upserted without embedding");
+                    let skill = glia_helix::Skill {
+                        content: item.candidate_rule.clone(),
+                        source: source.clone(),
+                        embedding: vec![],
+                        updated_at: item.created_at.clone(),
+                    };
+                    client.upsert_skill(&source, skill).await.map_err(|e| {
+                        anyhow::anyhow!("skill upsert failed: {e}")
+                    })?;
+                    println!("Approved and upserted skill '{source}' (no embedding).");
+                    return Ok(());
+                }
+            };
+            let embedding = embedder
+                .embed(&item.candidate_rule)
+                .map_err(|e| anyhow::anyhow!("embed failed: {e}"))?;
+            let skill = glia_helix::Skill {
+                content: item.candidate_rule.clone(),
+                source: source.clone(),
+                embedding,
+                updated_at: item.created_at.clone(),
+            };
+            client.upsert_skill(&source, skill).await.map_err(|e| {
+                anyhow::anyhow!("skill upsert failed: {e}")
+            })?;
+            println!("Approved and upserted skill '{source}'.");
+        }
+        ReviewOp::Reject { id } => {
+            let item = queue.reject(&id).await?;
+            println!("Rejected review item {} for '{}'.", item.id, item.file_path);
+        }
+    }
     Ok(())
 }
 

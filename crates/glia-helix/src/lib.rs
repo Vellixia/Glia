@@ -53,6 +53,11 @@ pub struct Tool {
     pub params_schema: serde_json::Value,
     /// Updated timestamp (for LWW, V16).
     pub updated_at: String,
+    /// Runtime binary required to run this tool (e.g., "uvx", "npx", "docker").
+    /// When set, the executor probes PATH for this binary before exec and surfaces
+    /// `Outcome::RuntimeMissing` if it is absent (Problem B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
 }
 
 /// An auth entry (e.g., `linear_oauth`).
@@ -86,6 +91,26 @@ pub struct Skill {
 pub struct Stack {
     /// Display name.
     pub name: String,
+}
+
+/// OAuth provider registry entry. Never stores `client_secret` — that lives in OpenBao.
+///
+/// Stored in HelixDB as a first-class record so the Hub can look up `auth_url`,
+/// `token_url`, and `client_id` when brokering an OAuth flow on behalf of the CLI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Provider {
+    /// Display name (e.g., "Linear", "GitHub").
+    pub name: String,
+    /// OAuth authorization URL (browser redirect target).
+    pub auth_url: String,
+    /// OAuth token exchange URL (server-to-server POST).
+    pub token_url: String,
+    /// OAuth client ID (non-secret).
+    pub client_id: String,
+    /// Scopes requested (e.g., `["read", "write"]`).
+    pub scopes: Vec<String>,
+    /// Updated timestamp (for LWW merges).
+    pub updated_at: String,
 }
 
 /// Glia HelixDB client. Wraps the HelixDB HTTP API.
@@ -153,7 +178,7 @@ impl HelixClient {
         name: &str,
         body: serde_json::Value,
     ) -> HelixResult<serde_json::Value> {
-        let url = format!("{}/v1/{}", self.base_url, name);
+        let url = format!("{}/v1/query/{}", self.base_url, name);
         let mut req = self.http.post(&url).json(&body);
         if let Some(k) = &self.api_key {
             req = req.bearer_auth(k);
@@ -303,6 +328,39 @@ impl HelixClient {
             .and_then(|n| n.as_i64())
             .ok_or_else(|| HelixError::Query("missing n in response".into()))?;
         Ok(n.max(0) as usize)
+    }
+
+    // ───────────────── provider registry ─────────────────
+
+    /// Upsert a provider registry entry (non-secret fields only).
+    pub async fn upsert_provider(&self, id: &str, provider: Provider) -> HelixResult<()> {
+        let body = serde_json::json!({ "id": id, "provider": provider });
+        self.query_raw("upsert_provider", body).await?;
+        Ok(())
+    }
+
+    /// Get a provider by ID. Returns `None` if not found.
+    pub async fn get_provider(&self, id: &str) -> HelixResult<Option<Provider>> {
+        let body = serde_json::json!({ "id": id });
+        let v = self.query_raw("get_provider", body).await?;
+        Ok(serde_json::from_value(v).ok())
+    }
+
+    /// List all providers with their record IDs.
+    pub async fn list_providers(&self) -> HelixResult<Vec<(String, Provider)>> {
+        let v = self
+            .query_raw("list_providers", serde_json::json!({}))
+            .await?;
+        let raw: Vec<serde_json::Value> = serde_json::from_value(v).unwrap_or_default();
+        Ok(raw
+            .into_iter()
+            .filter_map(|row| {
+                let id = row.get("id")?.as_str()?.to_string();
+                let provider: Provider =
+                    serde_json::from_value(row.get("provider")?.clone()).ok()?;
+                Some((id, provider))
+            })
+            .collect())
     }
 
     /// Check if a skill ID is local-namespaced (V16).

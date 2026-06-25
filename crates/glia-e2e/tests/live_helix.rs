@@ -49,6 +49,7 @@ async fn helix_tool_crud_live() {
         local: true,
         params_schema: serde_json::json!({"type": "object"}),
         updated_at: now(),
+        runtime: None,
     };
     client.upsert_tool(&tool_id, tool.clone()).await.unwrap();
     let got = client.get_tool(&tool_id).await.unwrap();
@@ -97,6 +98,7 @@ async fn helix_graph_edge_tool_requires_auth_live() {
                 local: false,
                 params_schema: serde_json::json!({}),
                 updated_at: now(),
+                runtime: None,
             },
         )
         .await

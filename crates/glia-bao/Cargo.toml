@@ -18,6 +18,7 @@ tracing = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "macros"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "test-util"] }

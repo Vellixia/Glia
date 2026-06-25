@@ -45,11 +45,12 @@ impl Fs {
     /// lexical normalization but fail canonicalize).
     fn resolve(&self, path: &str) -> Result<PathBuf, FsError> {
         let p = Path::new(path);
-        let joined = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            self.root.join(p)
-        };
+        // Absolute paths are always caller errors — the API expects paths
+        // relative to the project root. Reject early before normalization.
+        if p.is_absolute() {
+            return Err(FsError::PathEscape(path.to_string()));
+        }
+        let joined = self.root.join(p);
         // Normalize without requiring the file to exist.
         let normalized = normalize(&joined);
         // Check the normalized path starts with root.

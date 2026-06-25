@@ -216,6 +216,26 @@ fn build_query(path: &Path, stacks: &[String]) -> String {
     format!("{}{}", file_name, stack_str)
 }
 
+/// Return true if this path should trigger context loading.
+/// Filters out noise from build artifacts, version control internals, etc.
+fn should_watch_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    // Skip hidden dirs (.git, .cursor, .claude, etc.)
+    for component in path.components() {
+        let s = component.as_os_str().to_string_lossy();
+        if s.starts_with('.') || s == "node_modules" || s == "target" || s == "__pycache__" {
+            return false;
+        }
+    }
+    // Only watch known source extensions.
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    matches!(
+        ext,
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "sql" | "md" | "toml" | "json"
+    ) && !path_str.ends_with("package-lock.json")
+        && !path_str.ends_with("Cargo.lock")
+}
+
 /// No-op executor (context loading doesn't execute tools).
 struct NoopExecutor;
 
@@ -247,26 +267,52 @@ impl ContextWatcher {
         let repo_root_clone = repo_root.clone();
 
         // Spawn the notify watcher in a blocking thread.
+        // Pattern: std::sync::mpsc as intermediate (notify closure is sync);
+        // bridge to tokio channel via blocking_send from the thread loop.
         std::thread::spawn(move || {
-            use notify::{RecursiveMode, Watcher};
-            let (tx2, _) = std::sync::mpsc::channel();
-            let mut watcher = match notify::recommended_watcher(tx2) {
+            use notify::{EventKind, RecursiveMode, Watcher};
+            let (std_tx, std_rx) = std::sync::mpsc::channel::<PathBuf>();
+
+            let closure_tx = std_tx.clone();
+            let mut watcher = match notify::recommended_watcher(
+                move |res: notify::Result<notify::Event>| {
+                    if let Ok(event) = res {
+                        // Only forward create/modify events for source files.
+                        if matches!(
+                            event.kind,
+                            EventKind::Create(_) | EventKind::Modify(_)
+                        ) {
+                            for path in event.paths {
+                                if should_watch_path(&path) {
+                                    let _ = closure_tx.send(path);
+                                }
+                            }
+                        }
+                    }
+                },
+            ) {
                 Ok(w) => w,
                 Err(e) => {
                     tracing::error!(err = %e, "watcher init failed");
                     return;
                 }
             };
+            // Drop our explicit copy; only the closure holds std_tx now.
+            drop(std_tx);
+
             if let Err(e) = watcher.watch(&repo_root_clone, RecursiveMode::Recursive) {
                 tracing::error!(err = %e, "watch failed");
                 return;
             }
-            // We can't easily bridge std::sync::mpsc to tokio::mpsc from
-            // here; in production we'd use notify-debouncer-mini. For now,
-            // this is a no-op placeholder that keeps the watcher alive.
-            // The real event loop would forward events to `tx`.
-            drop(watcher);
-            drop(tx);
+
+            // Bridge std → tokio channel. Blocks until channel closed or
+            // tokio receiver dropped (blocking_send returns Err).
+            for path in std_rx {
+                if tx.blocking_send(path).is_err() {
+                    break;
+                }
+            }
+            // `watcher` dropped here → closure dropped → std_tx clone dropped.
         });
 
         let loader_clone = loader.clone();
@@ -451,6 +497,7 @@ mod tests {
             local: true,
             params_schema: serde_json::json!({}),
             updated_at: "2026-01-01T00:00:00Z".into(),
+            runtime: None,
         };
         let result = e.exec(&tool, &serde_json::json!({})).await.unwrap();
         assert_eq!(result, "");

@@ -22,6 +22,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use zeroize::Zeroizing;
 
 use glia_cache::Cache;
 
@@ -249,8 +250,8 @@ impl OpenBao for StubOpenBao {
 pub struct HttpOpenBao {
     /// Base URL (e.g., `http://127.0.0.1:8200`).
     pub base_url: String,
-    /// Root token.
-    pub token: String,
+    /// Root token — private and zeroized on drop so it never lingers in heap.
+    token: Zeroizing<String>,
     client: reqwest::Client,
 }
 
@@ -259,7 +260,7 @@ impl HttpOpenBao {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
-            token: token.into(),
+            token: Zeroizing::new(token.into()),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
@@ -272,7 +273,7 @@ impl HttpOpenBao {
         let resp = self
             .client
             .get(&url)
-            .header("X-Vault-Token", &self.token)
+            .header("X-Vault-Token", self.token.as_str())
             .send()
             .await
             .map_err(|e| BaoError::Http(e.to_string()))?;
@@ -299,7 +300,7 @@ impl HttpOpenBao {
         let resp = self
             .client
             .post(&url)
-            .header("X-Vault-Token", &self.token)
+            .header("X-Vault-Token", self.token.as_str())
             .json(body)
             .send()
             .await

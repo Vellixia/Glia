@@ -99,64 +99,51 @@ async fn whitespace_only_with_tabs_newlines() {
     assert!(out.stdout.is_empty());
 }
 
+/// SECURITY: semicolon injection must now be denied, not executed.
 #[tokio::test]
-async fn allowed_prefix_with_semicolon_injection() {
-    // SECURITY: "echo hi; rm -rf /" — allow-list matches ^echo\b but the
-    // whole string is passed to sh -c. Documents the injection gap.
+async fn semicolon_injection_denied() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = BashConfig::default_safe(tmp.path()).unwrap();
-    // The command IS allowed by the regex. It will run via sh -c.
-    // We use a harmless injection to verify it executes.
-    let out = run(&cfg, "echo hi; echo injected").await.unwrap();
-    assert!(out.stdout.contains("hi"));
-    assert!(out.stdout.contains("injected"));
+    // Allow-list matches ^echo\b, but `;` is a shell metacharacter — must
+    // be caught before exec on both Unix (argv) and Windows (cmd /C).
+    let err = run(&cfg, "echo hi; echo injected").await;
+    assert!(matches!(err, Err(BashError::CommandDenied(_))));
 }
 
+/// SECURITY: pipe injection must be denied.
 #[tokio::test]
-async fn allowed_prefix_with_pipe_injection() {
+async fn pipe_injection_denied() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = BashConfig::default_safe(tmp.path()).unwrap();
-    let out = run(&cfg, "echo hi | echo piped").await;
-    // Pipe should work under sh -c; on Windows cmd /C pipe behavior differs.
-    if cfg!(not(windows)) {
-        let out = out.unwrap();
-        assert!(out.exit_code == 0);
-    }
+    let err = run(&cfg, "echo hi | cat").await;
+    assert!(matches!(err, Err(BashError::CommandDenied(_))));
 }
 
+/// SECURITY: shell redirection (`>`) is a metacharacter — must be denied.
 #[tokio::test]
-async fn stderr_captured_on_success() {
+async fn redirect_metachar_denied() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = BashConfig::default_safe(tmp.path()).unwrap();
-    // echo to stderr via redirection
-    let out = run(&cfg, "echo err 1>&2").await.unwrap();
-    assert_eq!(out.exit_code, 0);
-    if cfg!(not(windows)) {
-        assert!(out.stderr.contains("err"));
-    }
+    let err = run(&cfg, "echo err 1>&2").await;
+    assert!(matches!(err, Err(BashError::CommandDenied(_))));
 }
 
+/// `false` exits 1 on Unix — non-zero exit is propagated as NonZeroExit.
+#[cfg(unix)]
 #[tokio::test]
 async fn exit_code_1_propagates() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = BashConfig::new(tmp.path(), &[r"^exit\b"]).unwrap();
-    let err = run(&cfg, "exit 1").await;
+    let cfg = BashConfig::new(tmp.path(), &[r"^false\b"]).unwrap();
+    let err = run(&cfg, "false").await;
     assert!(matches!(err, Err(BashError::NonZeroExit { code: 1, .. })));
 }
 
-#[tokio::test]
-async fn exit_code_255_propagates() {
-    let tmp = tempfile::tempdir().unwrap();
-    let cfg = BashConfig::new(tmp.path(), &[r"^exit\b"]).unwrap();
-    let err = run(&cfg, "exit 255").await;
-    assert!(matches!(err, Err(BashError::NonZeroExit { code: 255, .. })));
-}
-
+/// Zero exit code is returned as Ok.
 #[tokio::test]
 async fn exit_code_0_returns_ok() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = BashConfig::new(tmp.path(), &[r"^exit\b"]).unwrap();
-    let out = run(&cfg, "exit 0").await.unwrap();
+    let cfg = BashConfig::default_safe(tmp.path()).unwrap();
+    let out = run(&cfg, "echo ok").await.unwrap();
     assert_eq!(out.exit_code, 0);
 }
 
@@ -178,14 +165,13 @@ async fn very_long_command_string() {
     assert!(out.stdout.len() >= 1_000);
 }
 
+/// Newline is whitespace to shlex — `echo first\necho second` is a single
+/// call to echo with 3 args; the output still contains both words.
 #[tokio::test]
-async fn command_with_newline_runs_both() {
-    // "echo a\necho b" — sh -c treats \n as a command separator.
+async fn command_with_newline_in_args() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = BashConfig::default_safe(tmp.path()).unwrap();
-    // Use a literal newline in the string.
-    let cmd = "echo first\necho second";
-    let out = run(&cfg, cmd).await;
+    let out = run(&cfg, "echo first\nsecond").await;
     if cfg!(not(windows)) {
         let out = out.unwrap();
         assert!(out.stdout.contains("first"));

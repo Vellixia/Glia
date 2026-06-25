@@ -95,6 +95,15 @@ pub enum Outcome {
     },
     /// No relevant skills or tools discovered.
     NotApplicable,
+    /// Tool requires a runtime that is not installed on this device (Problem B).
+    RuntimeMissing {
+        /// Runtime binary name (e.g., "uvx", "npx", "docker").
+        runtime: String,
+        /// Minimum required version, if known.
+        needed_version: Option<String>,
+        /// Human-readable hint for the agent.
+        hint: String,
+    },
 }
 
 /// Final action response.
@@ -138,6 +147,50 @@ impl Executor for StubExecutor {
     }
 }
 
+/// Production executor that routes local tools through glia-bash and surfaces
+/// `Outcome::RuntimeMissing` when a required runtime is absent from PATH.
+pub struct RoutingExecutor {
+    /// Root directory enforced by glia-bash path boundary checks.
+    pub root: std::path::PathBuf,
+    /// Allow-list regex patterns forwarded to glia-bash.
+    pub allow_patterns: Vec<String>,
+}
+
+#[async_trait]
+impl Executor for RoutingExecutor {
+    async fn exec(&self, tool: &Tool, _params: &serde_json::Value) -> Result<String, String> {
+        // Probe the declared runtime before attempting execution.
+        if let Some(runtime) = &tool.runtime {
+            let probe = tokio::process::Command::new(runtime)
+                .arg("--version")
+                .output()
+                .await;
+            let available = probe.is_ok_and(|o| o.status.success());
+            if !available {
+                return Err(format!("RUNTIME_MISSING:{runtime}"));
+            }
+        }
+
+        if tool.local {
+            let patterns: Vec<&str> = self.allow_patterns.iter().map(String::as_str).collect();
+            let cfg = glia_bash::BashConfig::new(&self.root, &patterns)
+                .map_err(|e| e.to_string())?;
+            // Derive the command from the runtime + tool name, or just echo.
+            let command = match &tool.runtime {
+                Some(rt) => format!("{rt} {}", tool.name),
+                None => format!("echo {}", tool.name),
+            };
+            let output = glia_bash::run(&cfg, &command)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(output.stdout.trim().to_string())
+        } else {
+            // Remote dispatch is wired in Phase 2 via Hub action endpoint.
+            Err("remote tool dispatch not yet implemented".to_string())
+        }
+    }
+}
+
 /// Intent classifier.
 ///
 /// V13: local if query mentions file paths / shell; remote if mentions SaaS.
@@ -168,16 +221,90 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-/// Top-K skill search by cosine similarity.
+/// Top-K skill search by cosine similarity (no usage boost).
 pub fn rank_skills(query_vec: &[f32], skills: &[Skill], k: usize) -> Vec<SkillMatch> {
+    rank_skills_weighted(query_vec, skills, k, None)
+}
+
+/// Per-skill citation counts used to boost ranking of frequently-cited skills.
+///
+/// Loaded from `.glia/usage.jsonl` by the CLI before each `Action::run`
+/// and saved back after. The `Action` reads it for ranking only — mutation
+/// stays with the caller.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageStore {
+    /// `skill_source → citation_count`.
+    pub counts: std::collections::HashMap<String, u32>,
+}
+
+impl UsageStore {
+    /// Parse from JSONL content (one `{source, count}` object per line).
+    pub fn from_jsonl(content: &str) -> Self {
+        let mut counts = std::collections::HashMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                if let (Some(source), Some(count)) =
+                    (v["source"].as_str(), v["count"].as_u64())
+                {
+                    counts.insert(source.to_owned(), count as u32);
+                }
+            }
+        }
+        Self { counts }
+    }
+
+    /// Serialize to JSONL (one object per skill).
+    pub fn to_jsonl(&self) -> String {
+        let mut lines = Vec::new();
+        for (source, &count) in &self.counts {
+            lines.push(serde_json::json!({"source": source, "count": count}).to_string());
+        }
+        lines.join("\n") + if lines.is_empty() { "" } else { "\n" }
+    }
+
+    /// Increment counts for each cited skill source.
+    pub fn record(&mut self, sources: &[String]) {
+        for s in sources {
+            *self.counts.entry(s.clone()).or_insert(0) += 1;
+        }
+    }
+
+    /// Look up the usage count for a skill source (0 if unseen).
+    pub fn get(&self, source: &str) -> u32 {
+        self.counts.get(source).copied().unwrap_or(0)
+    }
+}
+
+/// Top-K skill search with optional usage-count boost.
+///
+/// Boost formula: `score = cosine * (1.0 + ALPHA * count.ln_1p())`
+/// where ALPHA = 0.05. At count=0 → no change; at count=10 → ~12% boost.
+/// Keeps semantic similarity primary while favouring proven skills.
+pub fn rank_skills_weighted(
+    query_vec: &[f32],
+    skills: &[Skill],
+    k: usize,
+    usage: Option<&UsageStore>,
+) -> Vec<SkillMatch> {
+    const ALPHA: f32 = 0.05;
     let mut scored: Vec<SkillMatch> = skills
         .iter()
-        .map(|s| SkillMatch {
-            id: format!("skill::{}", s.source),
-            content: s.content.clone(),
-            source: s.source.clone(),
-            score: cosine(query_vec, &s.embedding),
-            local: HelixClient::is_local_skill(&s.source),
+        .map(|s| {
+            let base = cosine(query_vec, &s.embedding);
+            let boost = usage.map_or(1.0, |u| {
+                1.0 + ALPHA * (u.get(&s.source) as f32).ln_1p()
+            });
+            SkillMatch {
+                id: format!("skill::{}", s.source),
+                content: s.content.clone(),
+                source: s.source.clone(),
+                score: base * boost,
+                local: HelixClient::is_local_skill(&s.source),
+            }
         })
         .collect();
     scored.sort_by(|a, b| {
@@ -196,6 +323,8 @@ pub struct Action {
     executor: Arc<dyn Executor>,
     /// Top-K for skill ranking.
     top_k: usize,
+    /// Optional usage store for boosting previously-cited skills.
+    usage: Option<UsageStore>,
 }
 
 impl Action {
@@ -206,12 +335,19 @@ impl Action {
             embedder,
             executor,
             top_k: 5,
+            usage: None,
         }
     }
 
     /// Override the top-K default.
     pub fn with_top_k(mut self, k: usize) -> Self {
         self.top_k = k;
+        self
+    }
+
+    /// Attach a usage store to boost previously-cited skills.
+    pub fn with_usage(mut self, store: UsageStore) -> Self {
+        self.usage = Some(store);
         self
     }
 
@@ -234,6 +370,14 @@ impl Action {
         } else if let Some(tool) = tools.first() {
             match self.executor.exec(tool, &serde_json::json!({})).await {
                 Ok(result) => Outcome::Done { result },
+                Err(e) if e.starts_with("RUNTIME_MISSING:") => {
+                    let runtime = e["RUNTIME_MISSING:".len()..].to_string();
+                    Outcome::RuntimeMissing {
+                        hint: format!("Install '{runtime}' and retry."),
+                        runtime,
+                        needed_version: None,
+                    }
+                }
                 Err(e) => return Err(ActionError::Exec(e)),
             }
         } else {
@@ -252,12 +396,14 @@ impl Action {
     }
 
     /// Vector-search skills; filter by stack if provided.
+    /// Applies usage-count boost when a store is attached.
     async fn discover_skills(
         &self,
         query_vec: &[f32],
         stack: Option<&str>,
     ) -> Result<Vec<SkillMatch>, ActionError> {
         let all = self.all_skills().await?;
+        let usage = self.usage.as_ref();
         if let Some(stack_id) = stack {
             let for_stack = self.client.skills_for_stack(stack_id).await?;
             let ids: std::collections::HashSet<String> =
@@ -266,9 +412,9 @@ impl Action {
                 .into_iter()
                 .filter(|s| ids.contains(&s.source))
                 .collect();
-            Ok(rank_skills(query_vec, &filtered, self.top_k))
+            Ok(rank_skills_weighted(query_vec, &filtered, self.top_k, usage))
         } else {
-            Ok(rank_skills(query_vec, &all, self.top_k))
+            Ok(rank_skills_weighted(query_vec, &all, self.top_k, usage))
         }
     }
 
@@ -546,6 +692,7 @@ mod tests {
                     local: false,
                     params_schema: serde_json::json!({}),
                     updated_at: now(),
+                    runtime: None,
                 },
             )
             .await
@@ -750,6 +897,49 @@ mod tests {
         assert!(exec.response.is_empty());
     }
 
+    #[tokio::test]
+    async fn routing_executor_missing_runtime_returns_runtime_missing_prefix() {
+        let exec = RoutingExecutor {
+            root: std::env::temp_dir(),
+            allow_patterns: vec![r"^echo ".to_string()],
+        };
+        let tool = Tool {
+            name: "some-tool".into(),
+            category: "test".into(),
+            local: true,
+            params_schema: serde_json::json!({}),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            // Use a binary that definitely doesn't exist on any system.
+            runtime: Some("__glia_nonexistent_runtime_xyz__".into()),
+        };
+        let err = exec.exec(&tool, &serde_json::json!({})).await.unwrap_err();
+        assert!(
+            err.starts_with("RUNTIME_MISSING:"),
+            "expected RUNTIME_MISSING: prefix, got: {err}"
+        );
+        assert!(err.contains("__glia_nonexistent_runtime_xyz__"));
+    }
+
+    #[test]
+    fn runtime_missing_outcome_round_trips() {
+        let r = ActionResult {
+            intent: Intent { query: "uvx foo".into(), stack: None },
+            kind: IntentKind::Local,
+            skills: vec![],
+            tools: vec![],
+            missing: vec![],
+            outcome: Outcome::RuntimeMissing {
+                runtime: "uvx".into(),
+                needed_version: Some(">=0.1".into()),
+                hint: "Install uvx and retry.".into(),
+            },
+            finished_at: now(),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        let back: ActionResult = serde_json::from_str(&s).unwrap();
+        assert!(matches!(back.outcome, Outcome::RuntimeMissing { runtime, .. } if runtime == "uvx"));
+    }
+
     #[test]
     fn unicode_action_intent_classification_full() {
         use IntentKind;
@@ -770,5 +960,85 @@ mod tests {
             classify(&Intent { query: "créer un ticket linear".into(), stack: None }),
             IntentKind::Remote
         );
+    }
+
+    // --- UsageStore tests ---
+
+    #[test]
+    fn usage_store_empty_get_returns_zero() {
+        let store = UsageStore::default();
+        assert_eq!(store.get("any-source"), 0);
+    }
+
+    #[test]
+    fn usage_store_record_increments() {
+        let mut store = UsageStore::default();
+        store.record(&["skill-a".into(), "skill-b".into()]);
+        store.record(&["skill-a".into()]);
+        assert_eq!(store.get("skill-a"), 2);
+        assert_eq!(store.get("skill-b"), 1);
+    }
+
+    #[test]
+    fn usage_store_jsonl_round_trip() {
+        let mut store = UsageStore::default();
+        store.record(&["x".into(), "y".into()]);
+        store.record(&["x".into()]);
+        let jsonl = store.to_jsonl();
+        let back = UsageStore::from_jsonl(&jsonl);
+        assert_eq!(back.get("x"), 2);
+        assert_eq!(back.get("y"), 1);
+    }
+
+    #[test]
+    fn usage_store_from_empty_string_gives_empty() {
+        let store = UsageStore::from_jsonl("");
+        assert!(store.counts.is_empty());
+    }
+
+    #[test]
+    fn usage_store_from_malformed_line_skips_it() {
+        let jsonl = "{\"source\":\"a\",\"count\":3}\n{not valid json}\n{\"source\":\"b\",\"count\":1}\n";
+        let store = UsageStore::from_jsonl(jsonl);
+        assert_eq!(store.get("a"), 3);
+        assert_eq!(store.get("b"), 1);
+    }
+
+    #[test]
+    fn rank_skills_weighted_boosts_high_usage() {
+        let q = vec![1.0_f32, 0.0];
+        let skills = vec![
+            Skill {
+                source: "low-usage".into(),
+                content: "x".into(),
+                embedding: vec![1.0, 0.0], // cosine = 1.0
+                updated_at: "t".into(),
+            },
+            Skill {
+                source: "high-usage".into(),
+                content: "y".into(),
+                embedding: vec![0.99, 0.141], // cosine slightly < 1.0
+                updated_at: "t".into(),
+            },
+        ];
+        let mut usage = UsageStore::default();
+        usage.record(&vec!["high-usage".into(); 100]); // 100 citations
+
+        let results = rank_skills_weighted(&q, &skills, 2, Some(&usage));
+        // high-usage should win due to boost even though its base cosine is lower.
+        assert_eq!(results[0].source, "high-usage");
+    }
+
+    #[test]
+    fn rank_skills_with_no_usage_same_as_rank_skills() {
+        let q = vec![1.0_f32, 0.0];
+        let skills = vec![
+            Skill { source: "a".into(), content: "x".into(), embedding: vec![0.9, 0.436], updated_at: "t".into() },
+            Skill { source: "b".into(), content: "y".into(), embedding: vec![1.0, 0.0], updated_at: "t".into() },
+        ];
+        let plain = rank_skills(&q, &skills, 2);
+        let weighted = rank_skills_weighted(&q, &skills, 2, None);
+        assert_eq!(plain[0].source, weighted[0].source);
+        assert_eq!(plain[1].source, weighted[1].source);
     }
 }

@@ -57,6 +57,7 @@ async fn real_helix_concurrent_upserts() {
                 local: true,
                 params_schema: serde_json::json!({}),
                 updated_at: now(),
+                runtime: None,
             };
             cc.upsert_tool(&id, tool).await.unwrap();
         }));
@@ -153,6 +154,7 @@ async fn real_helix_graph_edge_chain() {
                 local: false,
                 params_schema: serde_json::json!({}),
                 updated_at: now(),
+                runtime: None,
             },
         )
         .await
