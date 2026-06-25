@@ -11,30 +11,59 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+  # Fast gate: fmt + clippy on ubuntu only.
+  # Format and lint rules are platform-independent — no need to repeat on macOS/Windows.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.89
+      - uses: dtolnay/rust-toolchain@1.89
         with:
           components: rustfmt, clippy
-      - name: Cache cargo registry & build
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
-      - name: cargo clippy (workspace)
+      - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: cargo test (unit + integration, no e2e)
-        # Excludes glia-e2e — those require live Docker services and run locally only.
-        # --test-threads=1 avoids a Windows-only tmp-dir race in glia-init tests.
-        run: cargo test --workspace --all-targets --no-fail-fast --exclude glia-e2e -- --test-threads=1
-      - name: cargo build (release glia-cli)
+
+  # Cross-platform unit + integration tests.
+  # glia-e2e is excluded — it needs live Docker services and runs locally only.
+  # --test-threads=1 only on Windows (tmp-dir race in glia-init); unix runs parallel.
+  test:
+    name: test (${{ matrix.os }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
+            test_args: "-- --test-threads=1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - name: cargo test
+        run: cargo test --workspace --exclude glia-e2e --no-fail-fast ${{ matrix.test_args }}
+
+  # Verify the release binary compiles. Runs on ubuntu only — the release
+  # workflow handles cross-compilation for all targets on tag push.
+  build:
+    name: build (release)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - name: cargo build --release
         run: cargo build --release -p glia-cli
