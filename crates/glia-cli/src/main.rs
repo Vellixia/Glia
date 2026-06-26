@@ -25,6 +25,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Cmd {
     /// stdio <-> WebSocket translator. Connects to the Glia Hub `/gateway`.
+    ///
+    /// Intercepts `ConfigChanged` push events from the Hub and re-renders
+    /// `.cursor/rules/` + `.claude/settings.json` automatically — no `glia
+    /// sync` required.
     Bridge {
         /// WebSocket URL of the Hub gateway (default: ws://127.0.0.1:3000/gateway).
         #[arg(
@@ -33,6 +37,9 @@ pub enum Cmd {
             default_value = "ws://127.0.0.1:3000/gateway"
         )]
         hub_url: String,
+        /// Bearer token for Hub authentication.
+        #[arg(long, env = "GLIA_HUB_TOKEN")]
+        token: Option<String>,
     },
     /// Bidirectional sync against the Hub (V15/V16, T22).
     Sync {
@@ -289,10 +296,30 @@ async fn main() -> anyhow::Result<()> {
 
     let Cli { cmd } = Cli::parse();
     let result = match cmd {
-        Cmd::Bridge { hub_url } => {
+        Cmd::Bridge { hub_url, token } => {
             tracing::info!(url = %hub_url, "starting bridge");
-            let cfg = glia_bridge::BridgeConfig { url: hub_url };
-            glia_bridge::run_bridge(cfg).await.map_err(Into::into)
+            let cfg = glia_bridge::BridgeConfig {
+                url: hub_url.clone(),
+                bearer: token.clone(),
+            };
+            let (config_tx, mut config_rx) =
+                tokio::sync::mpsc::channel::<glia_proto::ServerFrame>(16);
+            let repo_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let hub_http = ws_to_hub_url(&hub_url);
+            let render_task = tokio::spawn(async move {
+                while let Some(frame) = config_rx.recv().await {
+                    if let glia_proto::ServerFrame::ConfigChanged { reason, .. } = frame {
+                        eprintln!("glia: config changed ({reason}) — re-rendering agent configs");
+                        re_render_agent_configs(&repo_root, &hub_http, token.as_deref()).await;
+                    }
+                }
+            });
+            let result = glia_bridge::run_bridge_with_handler(cfg, Some(config_tx))
+                .await
+                .map_err(anyhow::Error::from);
+            render_task.abort();
+            result
         }
         Cmd::Sync {
             hub,
@@ -439,6 +466,44 @@ async fn run_sync(hub: String, token: Option<String>, status_only: bool) -> anyh
         eprintln!("warn: mcp bridge re-register failed: {e}");
     }
     Ok(())
+}
+
+/// Convert a WebSocket gateway URL (`ws://host:port/…`) to an HTTP Hub URL.
+fn ws_to_hub_url(ws_url: &str) -> String {
+    let base = ws_url.trim_end_matches('/').trim_end_matches("/gateway");
+    if base.starts_with("wss://") {
+        base.replacen("wss://", "https://", 1)
+    } else {
+        base.replacen("ws://", "http://", 1)
+    }
+}
+
+/// Re-render `.cursor/rules/` and `.claude/settings.json` from Hub skills.
+///
+/// Called when a `ConfigChanged` push arrives on the long-lived bridge WS.
+async fn re_render_agent_configs(repo_root: &std::path::Path, hub_url: &str, token: Option<&str>) {
+    let client = match glia_helix::HelixClient::connect(Some(hub_url), token) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("glia: re-render: helix connect: {e}");
+            return;
+        }
+    };
+    let skills = match client.list_skills().await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("glia: re-render: list_skills: {e}");
+            return;
+        }
+    };
+    let stacks: Vec<String> = Vec::new();
+    if let Err(e) = glia_hooks::generate_cursor_rules(repo_root, &skills, &stacks).await {
+        eprintln!("glia: re-render: cursor rules: {e}");
+    }
+    if let Err(e) = glia_hooks::generate_claude_hooks(repo_root, &stacks).await {
+        eprintln!("glia: re-render: claude hooks: {e}");
+    }
+    eprintln!("glia: agent configs re-rendered");
 }
 
 /// Convert an HTTP Hub URL to a WebSocket gateway URL.
@@ -781,7 +846,7 @@ async fn run_save_skill(
         };
     let author = glia_author::SkillAuthor::new(backend);
     let stacks_ref: Vec<String> = hint_stacks;
-    let client = hub_client(hub, token).await?;
+    let client = hub_client(hub.clone(), token.clone()).await?;
     let id = author
         .save(
             &description,
@@ -806,7 +871,30 @@ async fn run_save_skill(
         "name": name,
     });
     println!("{}", serde_json::to_string_pretty(&output)?);
+
+    // Notify the Hub so all connected bridge sessions re-render agent configs.
+    // Best-effort: failure doesn't abort the save.
+    notify_hub_config_changed(&hub, token.as_deref(), "skill upserted", Some(&id)).await;
+
     Ok(())
+}
+
+/// Call `POST /notify/config-changed` on the Hub (best-effort — never fails).
+async fn notify_hub_config_changed(
+    hub: &str,
+    token: Option<&str>,
+    reason: &str,
+    skill_id: Option<&str>,
+) {
+    let url = format!("{}/notify/config-changed", hub.trim_end_matches('/'));
+    let body = serde_json::json!({ "reason": reason, "skill_id": skill_id });
+    let mut req = reqwest::Client::new().post(&url).json(&body);
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    if let Err(e) = req.send().await {
+        tracing::debug!("notify config-changed: {e}");
+    }
 }
 
 async fn run_use(

@@ -22,7 +22,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use subtle::ConstantTimeEq;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, info, warn};
 
 // ───────────────────── OAuth shared state ─────────────────────
@@ -35,11 +35,21 @@ struct PendingFlow {
     redirect_uri: String,
 }
 
+/// Payload broadcast to all open `/gateway` WS sessions when Hub state changes.
+#[derive(Debug, Clone)]
+struct ConfigChangedPayload {
+    reason: String,
+    skill_id: Option<String>,
+}
+
 /// Shared state injected into every OAuth handler via Axum `State`.
 #[derive(Clone)]
 pub struct OAuthState {
     flows: Arc<Mutex<HashMap<String, PendingFlow>>>,
     bao: Arc<dyn glia_bao::OpenBao>,
+    /// Broadcast channel: any Hub write that changes skill/tool/config sends
+    /// here; all open WS connections forward a `ServerFrame::ConfigChanged`.
+    config_tx: broadcast::Sender<ConfigChangedPayload>,
 }
 
 // ───────────────────── Request / Response bodies ─────────────────────
@@ -156,16 +166,22 @@ fn helix_from_env() -> Result<glia_helix::HelixClient, StatusCode> {
 /// `bao` is the OpenBao backend used by OAuth handlers; defaults to
 /// `StubOpenBao` when `None` (safe for tests, no secrets stored).
 pub fn hub_router(hub_token: Option<String>, bao: Option<Arc<dyn glia_bao::OpenBao>>) -> Router {
+    let (config_tx, _) = broadcast::channel::<ConfigChangedPayload>(64);
     let oauth_state = OAuthState {
         flows: Arc::new(Mutex::new(HashMap::new())),
         bao: bao
             .unwrap_or_else(|| Arc::new(glia_bao::StubOpenBao::new("stub-root", "glia-transit"))),
+        config_tx,
     };
     let token = Arc::new(hub_token);
     Router::new()
         .route("/gateway", get(gateway_handler))
         .route("/healthz", get(healthz_handler))
         .route("/action", post(action_handler))
+        .route(
+            "/notify/config-changed",
+            post(notify_config_changed_handler),
+        )
         .route("/oauth/provider", post(register_provider_handler))
         .route("/oauth/start", post(start_oauth_handler))
         .route("/oauth/callback", get(oauth_callback_handler))
@@ -527,56 +543,93 @@ async fn gateway_handler(
 
 async fn handle_connection(socket: WebSocket, addr: SocketAddr, state: OAuthState) {
     let (mut sink, mut stream) = socket.split();
-    while let Some(msg) = stream.next().await {
-        let msg = match msg {
-            Ok(m) => m,
-            Err(e) => {
-                warn!(%addr, error = %e, "ws recv error");
-                break;
-            }
-        };
-        match msg {
-            Message::Close(_) => {
-                debug!(%addr, "ws close");
-                break;
-            }
-            Message::Text(text) => {
-                let resp = match serde_json::from_str::<glia_proto::ClientFrame>(&text) {
-                    Err(e) => glia_proto::ServerFrame::Error {
-                        id: "?".into(),
-                        code: "PARSE_ERROR".into(),
-                        message: e.to_string(),
-                    },
-                    Ok(glia_proto::ClientFrame::Action {
-                        id,
-                        intent,
-                        stack,
-                        cwd: _,
-                    }) => dispatch_action(&id, intent, stack, &state).await,
-                    Ok(glia_proto::ClientFrame::LocalResult { .. }) => {
-                        // Phase 2: Hub-directed local execution.
-                        continue;
-                    }
+    let mut broadcast_rx = state.config_tx.subscribe();
+
+    loop {
+        tokio::select! {
+            // Prioritise incoming client frames over outbound broadcasts.
+            biased;
+
+            msg = stream.next() => {
+                let msg = match msg {
+                    None => break,
+                    Some(Err(e)) => { warn!(%addr, error = %e, "ws recv error"); break; }
+                    Some(Ok(m)) => m,
                 };
-                match serde_json::to_string(&resp) {
-                    Ok(json) => {
-                        if let Err(e) = sink.send(Message::Text(json.into())).await {
-                            warn!(%addr, error = %e, "ws send error");
+                match msg {
+                    Message::Close(_) => { debug!(%addr, "ws close"); break; }
+                    Message::Text(text) => {
+                        let resp = match serde_json::from_str::<glia_proto::ClientFrame>(&text) {
+                            Err(e) => glia_proto::ServerFrame::Error {
+                                id: "?".into(),
+                                code: "PARSE_ERROR".into(),
+                                message: e.to_string(),
+                            },
+                            Ok(glia_proto::ClientFrame::Action { id, intent, stack, cwd: _ }) => {
+                                dispatch_action(&id, intent, stack, &state).await
+                            }
+                            Ok(glia_proto::ClientFrame::LocalResult { .. }) => continue,
+                        };
+                        if let Ok(json) = serde_json::to_string(&resp)
+                            && sink.send(Message::Text(json.into())).await.is_err()
+                        {
                             break;
                         }
                     }
-                    Err(e) => {
-                        warn!(%addr, error = %e, "response serialize error");
-                    }
+                    Message::Binary(_) => warn!(%addr, "unexpected binary frame — ignored"),
+                    _ => {}
                 }
             }
-            Message::Binary(_) => {
-                warn!(%addr, "unexpected binary frame — ignored");
+
+            // Push ConfigChanged to this client whenever Hub state changes.
+            ev = broadcast_rx.recv() => {
+                match ev {
+                    Ok(payload) => {
+                        let frame = glia_proto::ServerFrame::ConfigChanged {
+                            reason: payload.reason,
+                            skill_id: payload.skill_id,
+                        };
+                        if let Ok(json) = serde_json::to_string(&frame)
+                            && sink.send(Message::Text(json.into())).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(%addr, skipped = n, "config broadcast lagged");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
-            _ => {}
         }
     }
+
     let _ = sink.close().await;
+}
+
+/// Request body for `POST /notify/config-changed`.
+#[derive(serde::Deserialize)]
+struct NotifyConfigChangedRequest {
+    reason: String,
+    #[serde(default)]
+    skill_id: Option<String>,
+}
+
+/// `POST /notify/config-changed` — broadcast a `ConfigChanged` event to all
+/// connected `/gateway` WS sessions.
+///
+/// Called by the CLI after any skill/tool write so every open bridge session
+/// re-renders agent configs without polling. Best-effort: returns 200 even
+/// when there are no active subscribers.
+async fn notify_config_changed_handler(
+    State(oauth): State<OAuthState>,
+    axum::extract::Json(req): axum::extract::Json<NotifyConfigChangedRequest>,
+) -> impl IntoResponse {
+    let _ = oauth.config_tx.send(ConfigChangedPayload {
+        reason: req.reason,
+        skill_id: req.skill_id,
+    });
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// Adapter that lets `glia_sandbox::Sandbox` call the async `glia_bao::OpenBao::unwrap`
