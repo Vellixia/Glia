@@ -907,6 +907,21 @@ async fn run_save_skill(
     Ok(())
 }
 
+/// Build a synthesizer from env vars, falling back to StubSynthesizer.
+///
+/// Set GLIA_SYNTH_URL (required), GLIA_SYNTH_KEY, and GLIA_SYNTH_MODEL to
+/// use a real OpenAI-compatible backend. Omitting GLIA_SYNTH_URL keeps the
+/// stub (no LLM calls, citations only).
+fn build_synthesizer() -> std::sync::Arc<dyn glia_synth::Synthesizer> {
+    if let Ok(url) = std::env::var("GLIA_SYNTH_URL") {
+        let key = std::env::var("GLIA_SYNTH_KEY").unwrap_or_default();
+        let model = std::env::var("GLIA_SYNTH_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        std::sync::Arc::new(glia_synth::HttpSynthesizer::new(url, key, model))
+    } else {
+        std::sync::Arc::new(glia_synth::StubSynthesizer::default())
+    }
+}
+
 /// Start a proactive context watcher for the bridge command (Phase 3.1).
 async fn start_context_watcher(
     repo_root: std::path::PathBuf,
@@ -914,11 +929,10 @@ async fn start_context_watcher(
     token: Option<&str>,
 ) -> anyhow::Result<glia_context::ContextWatcher> {
     use glia_context::{ContextLoader, ContextWatcher, DefaultStackDetector, StackDetector};
-    use glia_synth::StubSynthesizer;
     use std::sync::Arc;
     let client = glia_helix::HelixClient::connect(Some(hub_url), token)?;
     let embedder = Arc::new(glia_embed::Embedder::new()?);
-    let synth: Arc<dyn glia_synth::Synthesizer> = Arc::new(StubSynthesizer::default());
+    let synth = build_synthesizer();
     let detector: Arc<dyn StackDetector> = Arc::new(DefaultStackDetector);
     let loader = Arc::new(ContextLoader::new(client, embedder, synth, detector));
     ContextWatcher::start(repo_root, loader)
@@ -1065,7 +1079,6 @@ async fn run_context(
 ) -> anyhow::Result<()> {
     use glia_context::{ContextLoader, DefaultStackDetector};
     use glia_helix::HelixClient;
-    use glia_synth::StubSynthesizer;
     use std::sync::Arc;
 
     let client = HelixClient::connect(Some(&hub), token.as_deref())?;
@@ -1077,7 +1090,7 @@ async fn run_context(
             return Ok(());
         }
     };
-    let synth: Arc<dyn glia_synth::Synthesizer> = Arc::new(StubSynthesizer::default());
+    let synth = build_synthesizer();
     let detector: Arc<dyn glia_context::StackDetector> = Arc::new(DefaultStackDetector);
     let loader = ContextLoader::new(client, embedder, synth, detector);
 
