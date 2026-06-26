@@ -494,6 +494,7 @@ mod tests {
             params_schema: serde_json::json!({}),
             updated_at: "2026-01-01T00:00:00Z".into(),
             runtime: None,
+            min_version: None,
         };
         let result = e.exec(&tool, &serde_json::json!({})).await.unwrap();
         assert_eq!(result, "");

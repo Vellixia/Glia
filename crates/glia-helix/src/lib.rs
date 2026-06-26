@@ -58,6 +58,10 @@ pub struct Tool {
     /// `Outcome::RuntimeMissing` if it is absent (Problem B).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
+    /// Minimum runtime version required (e.g. "0.4.0" for uvx ≥ 0.4.0).
+    /// Enforced by the pre-flight check alongside `runtime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_version: Option<String>,
 }
 
 /// An auth entry (e.g., `linear_oauth`).

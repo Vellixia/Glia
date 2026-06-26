@@ -325,6 +325,46 @@ pub fn pick_runtime(preference: &[Runtime]) -> Option<Runtime> {
         .find(|r| which_check(r.binary()).is_ok())
 }
 
+/// Check if an arbitrary binary is available on PATH (string-based, not tied to the Runtime enum).
+pub fn probe_runtime_str(binary: &str) -> bool {
+    which_check(binary).is_ok()
+}
+
+/// Run `binary --version` and return the first version token found (e.g. "1.10.0").
+/// Returns `None` if the binary is absent or produces no parseable version.
+pub fn probe_version(binary: &str) -> Option<String> {
+    let output = std::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .ok()?;
+    let out = String::from_utf8_lossy(&output.stdout);
+    for token in out.split_whitespace() {
+        let t = token.trim_start_matches('v');
+        if t.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            let clean: String = t
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if !clean.is_empty() {
+                return Some(clean);
+            }
+        }
+    }
+    None
+}
+
+/// Return `true` if `found` satisfies the `needed` minimum version (dotted-numeric `>=`).
+/// E.g. `satisfies("1.10.0", "0.4.0")` → `true`.
+pub fn satisfies(found: &str, needed: &str) -> bool {
+    let parse = |s: &str| -> Vec<u32> {
+        s.split('.')
+            .take(3)
+            .map(|p| p.parse::<u32>().unwrap_or(0))
+            .collect()
+    };
+    parse(found) >= parse(needed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

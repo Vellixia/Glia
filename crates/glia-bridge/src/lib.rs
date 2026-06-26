@@ -40,7 +40,7 @@ pub struct BridgeConfig {
 impl Default for BridgeConfig {
     fn default() -> Self {
         Self {
-            url: "ws://127.0.0.1:6969/gateway".to_string(),
+            url: "ws://127.0.0.1:3000/gateway".to_string(),
         }
     }
 }

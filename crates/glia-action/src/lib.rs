@@ -364,17 +364,22 @@ impl Action {
                 deps: missing.clone(),
             }
         } else if let Some(tool) = tools.first() {
-            match self.executor.exec(tool, &serde_json::json!({})).await {
-                Ok(result) => Outcome::Done { result },
-                Err(e) if e.starts_with("RUNTIME_MISSING:") => {
-                    let runtime = e["RUNTIME_MISSING:".len()..].to_string();
-                    Outcome::RuntimeMissing {
-                        hint: format!("Install '{runtime}' and retry."),
-                        runtime,
-                        needed_version: None,
+            // Runtime pre-flight (Problem B): surface missing/outdated runtime BEFORE exec.
+            if let Some(early) = preflight_runtime(tool) {
+                early
+            } else {
+                match self.executor.exec(tool, &serde_json::json!({})).await {
+                    Ok(result) => Outcome::Done { result },
+                    Err(e) if e.starts_with("RUNTIME_MISSING:") => {
+                        let runtime = e["RUNTIME_MISSING:".len()..].to_string();
+                        Outcome::RuntimeMissing {
+                            hint: format!("Install '{runtime}' and retry."),
+                            runtime,
+                            needed_version: None,
+                        }
                     }
+                    Err(e) => return Err(ActionError::Exec(e)),
                 }
-                Err(e) => return Err(ActionError::Exec(e)),
             }
         } else {
             Outcome::NotApplicable
@@ -456,6 +461,31 @@ impl Action {
     async fn list_cred_ids(&self) -> Result<Vec<String>, ActionError> {
         Ok(self.client.list_cred_ids().await?)
     }
+}
+
+/// Runtime pre-flight check (Problem B).
+/// Returns `Some(Outcome::RuntimeMissing)` if the tool's required runtime is absent or too old;
+/// returns `None` if the check passes (exec should proceed).
+fn preflight_runtime(tool: &Tool) -> Option<Outcome> {
+    let runtime_bin = tool.runtime.as_deref()?;
+    if !glia_sandbox::probe_runtime_str(runtime_bin) {
+        return Some(Outcome::RuntimeMissing {
+            hint: format!("Install '{runtime_bin}' to run this tool locally."),
+            runtime: runtime_bin.to_string(),
+            needed_version: tool.min_version.clone(),
+        });
+    }
+    if let Some(needed) = &tool.min_version
+        && let Some(found) = glia_sandbox::probe_version(runtime_bin)
+        && !glia_sandbox::satisfies(&found, needed)
+    {
+        return Some(Outcome::RuntimeMissing {
+            hint: format!("'{runtime_bin}' {found} is too old; need \u{2265}{needed}."),
+            runtime: runtime_bin.to_string(),
+            needed_version: tool.min_version.clone(),
+        });
+    }
+    None
 }
 
 #[cfg(test)]
@@ -691,6 +721,7 @@ mod tests {
                     params_schema: serde_json::json!({}),
                     updated_at: now(),
                     runtime: None,
+                    min_version: None,
                 },
             )
             .await
@@ -938,6 +969,7 @@ mod tests {
             updated_at: "2026-01-01T00:00:00Z".into(),
             // Use a binary that definitely doesn't exist on any system.
             runtime: Some("__glia_nonexistent_runtime_xyz__".into()),
+            min_version: None,
         };
         let err = exec.exec(&tool, &serde_json::json!({})).await.unwrap_err();
         assert!(

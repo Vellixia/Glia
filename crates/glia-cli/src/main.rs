@@ -831,15 +831,18 @@ async fn run_provider(op: ProviderOp, hub: String, token: Option<String>) -> any
             client_secret,
             scopes,
         } => {
+            // Wrap the secret immediately so the original allocation is zeroed on drop.
+            let secret = zeroize::Zeroizing::new(client_secret);
             let body = serde_json::json!({
                 "id": id,
                 "name": name,
                 "auth_url": auth_url,
                 "token_url": token_url,
                 "client_id": client_id,
-                "client_secret": client_secret,
+                "client_secret": secret.as_str(),
                 "scopes": scopes,
             });
+            drop(secret); // zero before the HTTP round-trip completes
             let mut req = client.post(format!("{hub}/oauth/provider")).json(&body);
             if let Some(tok) = token {
                 req = req.bearer_auth(tok);
@@ -1075,17 +1078,22 @@ async fn run_review(
 ///
 /// Exit 0 if all runtimes are found, exit 1 if any are missing so CI can gate.
 async fn run_doctor() -> anyhow::Result<()> {
-    use glia_sandbox::{Runtime, probe_runtimes};
+    use glia_sandbox::{Runtime, probe_runtimes, probe_version};
 
     let runtimes = [Runtime::Npx, Runtime::Uvx, Runtime::Docker];
     let results = probe_runtimes(&runtimes);
 
     let mut any_missing = false;
-    println!("{:<10} STATUS", "RUNTIME");
-    println!("{}", "-".repeat(22));
+    println!("{:<10} {:<10} VERSION", "RUNTIME", "STATUS");
+    println!("{}", "-".repeat(35));
     for r in &results {
-        let status = if r.found { "ok" } else { "MISSING" };
-        println!("{:<10} {}", r.runtime.binary(), status);
+        let (status, version) = if r.found {
+            let v = probe_version(r.runtime.binary()).unwrap_or_else(|| "?".into());
+            ("ok", v)
+        } else {
+            ("MISSING", "-".into())
+        };
+        println!("{:<10} {:<10} {}", r.runtime.binary(), status, version);
         if !r.found {
             any_missing = true;
         }

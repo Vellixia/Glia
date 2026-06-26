@@ -10,6 +10,7 @@ description = "Unified glia_action endpoint — discover+exec+dep-check, intent 
 glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
 glia-bash = { path = "../glia-bash" }
+glia-sandbox = { path = "../glia-sandbox" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
