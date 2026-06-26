@@ -181,3 +181,78 @@ pub fn open_test_stdin(
     let _ = buf;
     Ok((a, b))
 }
+
+/// Error returned by [`call_once`].
+#[derive(Debug, thiserror::Error)]
+pub enum FrameError {
+    /// WebSocket connect or handshake failed.
+    #[error("ws connect: {0}")]
+    Connect(String),
+    /// Frame serialisation failed.
+    #[error("serialize: {0}")]
+    Serialize(#[from] serde_json::Error),
+    /// WebSocket send/recv failed.
+    #[error("ws io: {0}")]
+    Ws(String),
+    /// Connection closed before the Hub sent a response frame.
+    #[error("connection closed before response")]
+    ClosedEarly,
+}
+
+/// Connect to the Hub at `url`, send one [`glia_proto::ClientFrame`], and
+/// await the first [`glia_proto::ServerFrame`] response.
+///
+/// The connection is closed cleanly after the first response is received.
+/// Use this for one-shot RPC-style action requests; for the long-lived MCP
+/// bridge use [`run_bridge`] instead.
+///
+/// `bearer` is forwarded as `Authorization: Bearer <token>` when present.
+pub async fn call_once(
+    url: &str,
+    frame: &glia_proto::ClientFrame,
+    bearer: Option<&str>,
+) -> Result<glia_proto::ServerFrame, FrameError> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let mut request = url
+        .into_client_request()
+        .map_err(|e| FrameError::Connect(e.to_string()))?;
+
+    if let Some(token) = bearer {
+        let value =
+            tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&format!("Bearer {token}"))
+                .unwrap_or_else(|_| {
+                    tokio_tungstenite::tungstenite::http::HeaderValue::from_static("")
+                });
+        request.headers_mut().insert(
+            tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
+            value,
+        );
+    }
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| FrameError::Connect(e.to_string()))?;
+
+    let json = serde_json::to_string(frame)?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+        .await
+        .map_err(|e| FrameError::Ws(e.to_string()))?;
+
+    loop {
+        match ws.next().await {
+            None => return Err(FrameError::ClosedEarly),
+            Some(Err(e)) => return Err(FrameError::Ws(e.to_string())),
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                let server_frame: glia_proto::ServerFrame =
+                    serde_json::from_str(&text).map_err(FrameError::Serialize)?;
+                let _ = ws.close(None).await;
+                return Ok(server_frame);
+            }
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => {
+                return Err(FrameError::ClosedEarly);
+            }
+            Some(Ok(_)) => continue,
+        }
+    }
+}

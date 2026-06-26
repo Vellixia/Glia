@@ -441,12 +441,125 @@ async fn run_sync(hub: String, token: Option<String>, status_only: bool) -> anyh
     Ok(())
 }
 
+/// Convert an HTTP Hub URL to a WebSocket gateway URL.
+fn hub_to_ws_url(hub: &str) -> String {
+    let base = hub.trim_end_matches('/');
+    if base.starts_with("https://") {
+        format!("{}/gateway", base.replacen("https://", "wss://", 1))
+    } else if base.starts_with("http://") {
+        format!("{}/gateway", base.replacen("http://", "ws://", 1))
+    } else {
+        format!("ws://{base}/gateway")
+    }
+}
+
+/// Generate a monotonic correlation ID for WS request/response matching.
+fn make_request_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static CTR: AtomicU64 = AtomicU64::new(0);
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let n = CTR.fetch_add(1, Ordering::Relaxed);
+    format!("{ms:016x}{n:08x}")
+}
+
+/// Print or propagate a `ServerFrame` returned by the Hub gateway.
+fn print_server_frame(frame: glia_proto::ServerFrame) -> anyhow::Result<()> {
+    match frame {
+        glia_proto::ServerFrame::Result { outcome, .. } => {
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            Ok(())
+        }
+        glia_proto::ServerFrame::RuntimeMissing { runtime, hint, .. } => {
+            Err(anyhow::anyhow!("RUNTIME_MISSING: {runtime} — {hint}"))
+        }
+        glia_proto::ServerFrame::Error { code, message, .. } => {
+            Err(anyhow::anyhow!("[{code}] {message}"))
+        }
+        glia_proto::ServerFrame::AuthRequired { deps, .. } => Err(anyhow::anyhow!(
+            "auth still required after flow: {}",
+            deps.iter()
+                .map(|d| d.cred.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Route a remote intent to the Hub WS gateway and handle the response.
+///
+/// On `AuthRequired`: triggers the Hub OAuth flow, then re-sends once.
+async fn run_action_remote(
+    intent: String,
+    stack: Option<String>,
+    hub: &str,
+    token: Option<&str>,
+) -> anyhow::Result<()> {
+    let ws_url = hub_to_ws_url(hub);
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(String::from));
+
+    let frame = glia_proto::ClientFrame::Action {
+        id: make_request_id(),
+        intent: intent.clone(),
+        stack: stack.clone(),
+        cwd: cwd.clone(),
+    };
+
+    let resp = glia_bridge::call_once(&ws_url, &frame, token)
+        .await
+        .map_err(|e| anyhow::anyhow!("hub ws: {e}"))?;
+
+    if let glia_proto::ServerFrame::AuthRequired { ref deps, .. } = resp {
+        let action_deps: Vec<glia_action::MissingDep> = deps
+            .iter()
+            .map(|d| glia_action::MissingDep {
+                tool: d.tool.clone(),
+                cred: d.cred.clone(),
+            })
+            .collect();
+        handle_auth_required_via_hub(&action_deps, hub, token, glia_auth::AUTH_TIMEOUT).await?;
+
+        // Re-send after auth.
+        eprintln!("Re-sending action after authentication...");
+        let frame2 = glia_proto::ClientFrame::Action {
+            id: make_request_id(),
+            intent,
+            stack,
+            cwd,
+        };
+        let resp2 = glia_bridge::call_once(&ws_url, &frame2, token)
+            .await
+            .map_err(|e| anyhow::anyhow!("hub ws (retry): {e}"))?;
+        return print_server_frame(resp2);
+    }
+
+    print_server_frame(resp)
+}
+
 async fn run_action(
     intent: String,
     stack: Option<String>,
     hub: String,
     token: Option<String>,
 ) -> anyhow::Result<()> {
+    // Phase 1: remote intents route through Hub WS; local intents stay in-CLI.
+    let intent_obj = glia_action::Intent {
+        query: intent.clone(),
+        stack: stack.clone(),
+    };
+    if matches!(
+        glia_action::classify(&intent_obj),
+        glia_action::IntentKind::Remote
+    ) {
+        return run_action_remote(intent, stack, &hub, token.as_deref()).await;
+    }
+
     let client = hub_client(hub.clone(), token.clone()).await?;
     let embedder = std::sync::Arc::new(glia_embed::Embedder::new()?);
     let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

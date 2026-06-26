@@ -1260,6 +1260,8 @@ name = "glia-bridge"
 version = "0.2.0"
 dependencies = [
  "futures-util",
+ "glia-proto",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.26.2",
@@ -1331,6 +1333,7 @@ dependencies = [
  "glia-helix",
  "glia-hooks",
  "glia-init",
+ "glia-proto",
  "glia-review",
  "glia-sandbox",
  "glia-sync",
@@ -1458,6 +1461,8 @@ dependencies = [
  "glia-bao",
  "glia-embed",
  "glia-helix",
+ "glia-proto",
+ "glia-sandbox",
  "hyper",
  "reqwest 0.12.28",
  "serde",
@@ -1484,6 +1489,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "glia-proto"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

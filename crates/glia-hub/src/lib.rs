@@ -517,14 +517,15 @@ async fn oauth_status_handler(
 
 /// `GET /gateway` — WebSocket upgrade.
 async fn gateway_handler(
+    State(oauth): State<OAuthState>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     info!(%addr, "ws upgrade");
-    ws.on_upgrade(move |socket| handle_connection(socket, addr))
+    ws.on_upgrade(move |socket| handle_connection(socket, addr, oauth))
 }
 
-async fn handle_connection(socket: WebSocket, addr: SocketAddr) {
+async fn handle_connection(socket: WebSocket, addr: SocketAddr, state: OAuthState) {
     let (mut sink, mut stream) = socket.split();
     while let Some(msg) = stream.next().await {
         let msg = match msg {
@@ -539,16 +540,249 @@ async fn handle_connection(socket: WebSocket, addr: SocketAddr) {
                 debug!(%addr, "ws close");
                 break;
             }
-            Message::Text(_) | Message::Binary(_) => {
-                if let Err(e) = sink.send(msg).await {
-                    warn!(%addr, error = %e, "ws send error");
-                    break;
+            Message::Text(text) => {
+                let resp = match serde_json::from_str::<glia_proto::ClientFrame>(&text) {
+                    Err(e) => glia_proto::ServerFrame::Error {
+                        id: "?".into(),
+                        code: "PARSE_ERROR".into(),
+                        message: e.to_string(),
+                    },
+                    Ok(glia_proto::ClientFrame::Action {
+                        id,
+                        intent,
+                        stack,
+                        cwd: _,
+                    }) => dispatch_action(&id, intent, stack, &state).await,
+                    Ok(glia_proto::ClientFrame::LocalResult { .. }) => {
+                        // Phase 2: Hub-directed local execution.
+                        continue;
+                    }
+                };
+                match serde_json::to_string(&resp) {
+                    Ok(json) => {
+                        if let Err(e) = sink.send(Message::Text(json.into())).await {
+                            warn!(%addr, error = %e, "ws send error");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(%addr, error = %e, "response serialize error");
+                    }
                 }
+            }
+            Message::Binary(_) => {
+                warn!(%addr, "unexpected binary frame — ignored");
             }
             _ => {}
         }
     }
     let _ = sink.close().await;
+}
+
+/// Adapter that lets `glia_sandbox::Sandbox` call the async `glia_bao::OpenBao::unwrap`
+/// from a synchronous `OpenBaoUnwrapper::unwrap` context.
+///
+/// Uses `tokio::task::block_in_place` — safe on a multi-thread Tokio runtime.
+struct BaoUnwrapAdapter(std::sync::Arc<dyn glia_bao::OpenBao>);
+
+impl glia_sandbox::OpenBaoUnwrapper for BaoUnwrapAdapter {
+    fn unwrap(
+        &self,
+        wrapping_token: &str,
+    ) -> Result<glia_sandbox::Secret, glia_sandbox::SandboxError> {
+        let bao = self.0.clone();
+        let token = wrapping_token.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move { bao.unwrap(&token).await })
+        })
+        .map(|s| {
+            let mut env = std::collections::HashMap::new();
+            for (k, v) in s.data {
+                let val = v.as_str().map_or_else(|| v.to_string(), |s| s.to_string());
+                env.insert(k, val);
+            }
+            glia_sandbox::Secret { env }
+        })
+        .map_err(|e| glia_sandbox::SandboxError::Unwrap(e.to_string()))
+    }
+}
+
+/// Run the full action pipeline server-side and return a `ServerFrame`.
+///
+/// Checks OpenBao to distinguish truly-missing creds from already-authenticated
+/// ones, then executes the tool via `Sandbox` + response-wrapping token mint.
+async fn dispatch_action(
+    id: &str,
+    intent: String,
+    stack: Option<String>,
+    state: &OAuthState,
+) -> glia_proto::ServerFrame {
+    let client = match helix_from_env() {
+        Ok(c) => c,
+        Err(_) => {
+            return glia_proto::ServerFrame::Error {
+                id: id.into(),
+                code: "HELIX_ERR".into(),
+                message: "helix connect failed".into(),
+            };
+        }
+    };
+    let embedder = match glia_embed::Embedder::try_new() {
+        Some(e) => std::sync::Arc::new(e),
+        None => {
+            return glia_proto::ServerFrame::Error {
+                id: id.into(),
+                code: "EMBED_ERR".into(),
+                message: "embed model assets not available on Hub".into(),
+            };
+        }
+    };
+
+    let executor = std::sync::Arc::new(glia_action::StubExecutor {
+        response: String::new(),
+    });
+    let action = glia_action::Action::new(client, embedder, executor);
+    let intent_obj = glia_action::Intent {
+        query: intent,
+        stack,
+    };
+
+    let result = match action.run(intent_obj).await {
+        Ok(r) => r,
+        Err(e) => {
+            return glia_proto::ServerFrame::Error {
+                id: id.into(),
+                code: "ACTION_ERR".into(),
+                message: e.to_string(),
+            };
+        }
+    };
+
+    match result.outcome {
+        glia_action::Outcome::NotApplicable => glia_proto::ServerFrame::Result {
+            id: id.into(),
+            outcome: serde_json::json!({"type": "not_applicable"}),
+        },
+        glia_action::Outcome::Done { result: r } => glia_proto::ServerFrame::Result {
+            id: id.into(),
+            outcome: serde_json::json!({"type": "done", "result": r}),
+        },
+        glia_action::Outcome::RuntimeMissing {
+            runtime,
+            needed_version,
+            hint,
+        } => glia_proto::ServerFrame::RuntimeMissing {
+            id: id.into(),
+            runtime,
+            needed_version,
+            hint,
+        },
+        glia_action::Outcome::AuthRequired { deps: _ } => {
+            // dep_check reports every tool-cred pair as "missing" because it
+            // doesn't consult OpenBao. Check which creds are actually ready.
+            let mut truly_missing: Vec<glia_proto::MissingDep> = Vec::new();
+            let mut ready_pairs: Vec<(glia_helix::Tool, String)> = Vec::new();
+
+            for (tool, dep) in result.tools.iter().zip(result.missing.iter()) {
+                let path = format!("secret/data/oauth/{}", dep.cred);
+                if state.bao.kv_get(&path).await.is_ok() {
+                    ready_pairs.push((tool.clone(), dep.cred.clone()));
+                } else {
+                    truly_missing.push(glia_proto::MissingDep {
+                        tool: dep.tool.clone(),
+                        cred: dep.cred.clone(),
+                    });
+                }
+            }
+
+            if truly_missing.is_empty() && !ready_pairs.is_empty() {
+                exec_with_ready_creds(id, ready_pairs, &state.bao).await
+            } else {
+                glia_proto::ServerFrame::AuthRequired {
+                    id: id.into(),
+                    deps: truly_missing,
+                }
+            }
+        }
+    }
+}
+
+/// Execute a tool using a per-exec response-wrapping token from OpenBao.
+///
+/// Mints a single-use wrapping token, stages it in the Sandbox, runs the
+/// tool, and purges secrets on completion. The Hub never holds plaintext.
+async fn exec_with_ready_creds(
+    id: &str,
+    pairs: Vec<(glia_helix::Tool, String)>,
+    bao: &std::sync::Arc<dyn glia_bao::OpenBao>,
+) -> glia_proto::ServerFrame {
+    let Some((tool, cred_id)) = pairs.into_iter().next() else {
+        return glia_proto::ServerFrame::Error {
+            id: id.into(),
+            code: "NO_TOOL".into(),
+            message: "no ready tool found in pairs".into(),
+        };
+    };
+
+    let Some(ref runtime_str) = tool.runtime else {
+        return glia_proto::ServerFrame::Error {
+            id: id.into(),
+            code: "NO_RUNTIME".into(),
+            message: format!("tool '{}' has no runtime specified", tool.name),
+        };
+    };
+
+    let runtime = match runtime_str.as_str() {
+        "npx" => glia_sandbox::Runtime::Npx,
+        "uvx" => glia_sandbox::Runtime::Uvx,
+        "docker" => glia_sandbox::Runtime::Docker,
+        other => {
+            return glia_proto::ServerFrame::Error {
+                id: id.into(),
+                code: "UNKNOWN_RUNTIME".into(),
+                message: format!("unknown runtime: {other}"),
+            };
+        }
+    };
+
+    let cred_path = format!("secret/data/oauth/{cred_id}");
+    let wrapping_token = match bao.mint_wrapping(&cred_path, glia_bao::WRAPPING_TTL).await {
+        Ok(t) => t,
+        Err(e) => {
+            return glia_proto::ServerFrame::Error {
+                id: id.into(),
+                code: "WRAPPING_ERR".into(),
+                message: e.to_string(),
+            };
+        }
+    };
+
+    let adapter = BaoUnwrapAdapter(bao.clone());
+    let mut sandbox = glia_sandbox::Sandbox::new(&adapter);
+    if let Err(e) = sandbox.stage_token(&wrapping_token) {
+        return glia_proto::ServerFrame::Error {
+            id: id.into(),
+            code: "STAGE_ERR".into(),
+            message: e.to_string(),
+        };
+    }
+
+    match sandbox.exec(runtime, &tool.name, &[]).await {
+        Ok(out) => glia_proto::ServerFrame::Result {
+            id: id.into(),
+            outcome: serde_json::json!({
+                "type": "done",
+                "result": out.stdout,
+                "stderr": out.stderr,
+                "exit_code": out.exit_code,
+            }),
+        },
+        Err(e) => glia_proto::ServerFrame::Error {
+            id: id.into(),
+            code: "EXEC_ERR".into(),
+            message: e.to_string(),
+        },
+    }
 }
 
 /// Bind the Hub server to `addr` and serve until shutdown.
