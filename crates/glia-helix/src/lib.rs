@@ -86,6 +86,10 @@ pub struct Skill {
     pub embedding: Vec<f32>,
     /// Updated timestamp (for LWW).
     pub updated_at: String,
+    /// Times this skill has been approved via `glia review approve`.
+    /// Hub-side counter; boosts ranking on all devices (V19+).
+    #[serde(default)]
+    pub usage_count: u32,
 }
 
 /// A tech stack entry (e.g., `nextjs`, `supabase`).
@@ -223,6 +227,17 @@ impl HelixClient {
         let body = serde_json::json!({ "id": id, "skill": skill });
         self.query_raw("upsert_skill", body).await?;
         Ok(())
+    }
+
+    /// Increment `usage_count` on a skill by `delta` and re-upsert.
+    ///
+    /// No-op if the skill isn't found. Best-effort: callers should not fail on error.
+    pub async fn bump_usage(&self, skill_id: &str, delta: u32) -> HelixResult<()> {
+        let Some(mut skill) = self.get_skill(skill_id).await? else {
+            return Ok(());
+        };
+        skill.usage_count = skill.usage_count.saturating_add(delta);
+        self.upsert_skill(skill_id, skill).await
     }
 
     /// Upsert a stack record.

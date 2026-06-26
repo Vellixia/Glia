@@ -71,6 +71,7 @@ async fn helix_skill_upsert_and_retrieve_live() {
         source: skill_id.clone(),
         embedding: vec![0.1; 384],
         updated_at: now(),
+        usage_count: 0,
     };
     client.upsert_skill(&skill_id, skill).await.unwrap();
     let got = client.get_skill(&skill_id).await.unwrap();
@@ -143,6 +144,7 @@ async fn helix_skill_stack_edge_live() {
                 source: skill_id.clone(),
                 embedding: vec![0.2; 384],
                 updated_at: now(),
+                usage_count: 0,
             },
         )
         .await

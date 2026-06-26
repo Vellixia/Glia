@@ -121,8 +121,7 @@ pub fn build_review_capture_hook(matcher: &str) -> ClaudeHookEntry {
         hooks: vec![ClaudeHookCommand {
             hook_type: "command".into(),
             // `$CLAUDE_TOOL_INPUT_FILE_PATH` is the file written by the agent.
-            command: "glia review capture \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null || true"
-                .into(),
+            command: "glia review capture --stdin".into(),
         }],
     }
 }
@@ -407,6 +406,7 @@ mod tests {
             content: content.into(),
             embedding: vec![],
             updated_at: "2026-01-01T00:00:00Z".into(),
+            usage_count: 0,
         }
     }
 

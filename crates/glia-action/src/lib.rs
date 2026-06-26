@@ -293,12 +293,14 @@ pub fn rank_skills_weighted(
         .iter()
         .map(|s| {
             let base = cosine(query_vec, &s.embedding);
-            let boost = usage.map_or(1.0, |u| 1.0 + ALPHA * (u.get(&s.source) as f32).ln_1p());
+            let device_boost =
+                usage.map_or(1.0, |u| 1.0 + ALPHA * (u.get(&s.source) as f32).ln_1p());
+            let hub_boost = 1.0 + ALPHA * (s.usage_count as f32).ln_1p();
             SkillMatch {
                 id: format!("skill::{}", s.source),
                 content: s.content.clone(),
                 source: s.source.clone(),
-                score: base * boost,
+                score: base * device_boost * hub_boost,
                 local: HelixClient::is_local_skill(&s.source),
             }
         })
@@ -539,12 +541,14 @@ mod tests {
             source: "rust-borrow.md".into(),
             embedding: vec![1.0, 0.0, 0.0],
             updated_at: now(),
+            usage_count: 0,
         };
         let s2 = Skill {
             content: "kittens".into(),
             source: "cats.md".into(),
             embedding: vec![0.0, 1.0, 0.0],
             updated_at: now(),
+            usage_count: 0,
         };
         let query = vec![1.0, 0.0, 0.0];
         let ranked = rank_skills(&query, &[s1, s2], 2);
@@ -567,6 +571,7 @@ mod tests {
                     source: "local::auth-required-rule".into(),
                     embedding: vec![1.0, 0.0, 0.0],
                     updated_at: now(),
+                    usage_count: 0,
                 },
             )
             .await
@@ -614,6 +619,7 @@ mod tests {
                     source: "local::cat-readme".into(),
                     embedding: vec![1.0, 0.0, 0.0],
                     updated_at: now(),
+                    usage_count: 0,
                 },
             )
             .await
@@ -652,6 +658,7 @@ mod tests {
                     source: "nextjs::rule".into(),
                     embedding: vec![1.0, 0.0, 0.0],
                     updated_at: now(),
+                    usage_count: 0,
                 },
             )
             .await
@@ -892,6 +899,7 @@ mod tests {
             source: "x.md".into(),
             embedding: vec![1.0],
             updated_at: now(),
+            usage_count: 0,
         }];
         let ranked = rank_skills(&[1.0], &skills, 0);
         assert!(ranked.is_empty());
@@ -905,12 +913,14 @@ mod tests {
                 source: "a.md".into(),
                 embedding: vec![1.0],
                 updated_at: now(),
+                usage_count: 0,
             },
             Skill {
                 content: "b".into(),
                 source: "b.md".into(),
                 embedding: vec![0.0],
                 updated_at: now(),
+                usage_count: 0,
             },
         ];
         let ranked = rank_skills(&[1.0], &skills, 10);
@@ -933,12 +943,14 @@ mod tests {
                 source: "first.md".into(),
                 embedding: vec![1.0, 0.0],
                 updated_at: now(),
+                usage_count: 0,
             },
             Skill {
                 content: "second".into(),
                 source: "second.md".into(),
                 embedding: vec![1.0, 0.0],
                 updated_at: now(),
+                usage_count: 0,
             },
         ];
         let ranked = rank_skills(&[1.0, 0.0], &skills, 2);
@@ -1090,12 +1102,14 @@ mod tests {
                 content: "x".into(),
                 embedding: vec![1.0, 0.0], // cosine = 1.0
                 updated_at: "t".into(),
+                usage_count: 0,
             },
             Skill {
                 source: "high-usage".into(),
                 content: "y".into(),
                 embedding: vec![0.99, 0.141], // cosine slightly < 1.0
                 updated_at: "t".into(),
+                usage_count: 0,
             },
         ];
         let mut usage = UsageStore::default();
@@ -1115,12 +1129,14 @@ mod tests {
                 content: "x".into(),
                 embedding: vec![0.9, 0.436],
                 updated_at: "t".into(),
+                usage_count: 0,
             },
             Skill {
                 source: "b".into(),
                 content: "y".into(),
                 embedding: vec![1.0, 0.0],
                 updated_at: "t".into(),
+                usage_count: 0,
             },
         ];
         let plain = rank_skills(&q, &skills, 2);

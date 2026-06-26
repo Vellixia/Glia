@@ -391,6 +391,7 @@ mod tests {
                 source: "a.md".into(),
                 embedding: vec![],
                 updated_at: now.into(),
+                usage_count: 0,
             },
         )
         .await
@@ -402,6 +403,7 @@ mod tests {
                 source: "b.md".into(),
                 embedding: vec![],
                 updated_at: now.into(),
+                usage_count: 0,
             },
         )
         .await

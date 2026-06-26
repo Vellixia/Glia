@@ -198,6 +198,7 @@ pub async fn use_tool(
             source: entry.path.clone(),
             embedding: vector,
             updated_at: now,
+            usage_count: 0,
         },
     )
     .await

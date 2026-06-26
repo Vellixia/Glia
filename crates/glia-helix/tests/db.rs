@@ -110,6 +110,8 @@ async fn graph_edge_applies_to() {
             source: "supabase-auth.md".to_string(),
             embedding: vec![0.1, 0.2, 0.3],
             updated_at: now(),
+
+            usage_count: 0,
         },
     )
     .await
@@ -158,6 +160,8 @@ async fn skill_upsert_with_local_namespace() {
             source: "dev-correction".to_string(),
             embedding: vec![0.5, 0.5],
             updated_at: now(),
+
+            usage_count: 0,
         },
     )
     .await

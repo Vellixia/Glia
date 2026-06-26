@@ -84,6 +84,7 @@ async fn real_helix_large_skill_body() {
         source: id.clone(),
         embedding: vec![0.0; 384],
         updated_at: now(),
+        usage_count: 0,
     };
     client.upsert_skill(&id, skill).await.unwrap();
     let got = client.get_skill(&id).await.unwrap();
@@ -105,6 +106,7 @@ async fn real_helix_unicode_skill_id() {
         source: id.clone(),
         embedding: vec![0.1; 384],
         updated_at: now(),
+        usage_count: 0,
     };
     client.upsert_skill(&id, skill).await.unwrap();
     let got = client.get_skill(&id).await.unwrap();
@@ -129,6 +131,7 @@ async fn real_helix_lww_upsert() {
                 source: id.clone(),
                 embedding: vec![0.1; 384],
                 updated_at: "2026-01-01T00:00:00Z".into(),
+                usage_count: 0,
             },
         )
         .await
@@ -142,6 +145,7 @@ async fn real_helix_lww_upsert() {
                 source: id.clone(),
                 embedding: vec![0.2; 384],
                 updated_at: "2026-12-31T00:00:00Z".into(),
+                usage_count: 0,
             },
         )
         .await
@@ -202,6 +206,7 @@ async fn real_helix_graph_edge_chain() {
                 source: skill_id.clone(),
                 embedding: vec![0.1; 384],
                 updated_at: now(),
+                usage_count: 0,
             },
         )
         .await
@@ -251,6 +256,7 @@ async fn real_helix_zero_embedding_skill() {
         source: id.clone(),
         embedding: vec![0.0; 384],
         updated_at: now(),
+        usage_count: 0,
     };
     client.upsert_skill(&id, skill).await.unwrap();
     let got = client.get_skill(&id).await.unwrap();

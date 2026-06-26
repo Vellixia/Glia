@@ -368,6 +368,7 @@ mod tests {
                 source: format!("{}.md", id),
                 embedding: v,
                 updated_at: now.into(),
+                usage_count: 0,
             },
         )
         .await

@@ -267,8 +267,13 @@ pub enum ReviewOp {
     /// Called automatically by the PostToolUse hook.
     Capture {
         /// Path of the file written by the agent.
-        file: String,
-        /// Optional diff string (stdin if absent).
+        /// Inferred from stdin JSON when --stdin is set.
+        #[arg(required_unless_present = "stdin")]
+        file: Option<String>,
+        /// Read PostToolUse hook JSON from stdin; extract file path + diff automatically.
+        #[arg(long)]
+        stdin: bool,
+        /// Explicit diff string. Ignored when --stdin is set.
         #[arg(long)]
         diff: Option<String>,
     },
@@ -307,18 +312,41 @@ async fn main() -> anyhow::Result<()> {
             let repo_root =
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let hub_http = ws_to_hub_url(&hub_url);
+            let (repo_root_render, hub_http_render, token_render) =
+                (repo_root.clone(), hub_http.clone(), token.clone());
             let render_task = tokio::spawn(async move {
                 while let Some(frame) = config_rx.recv().await {
                     if let glia_proto::ServerFrame::ConfigChanged { reason, .. } = frame {
                         eprintln!("glia: config changed ({reason}) — re-rendering agent configs");
-                        re_render_agent_configs(&repo_root, &hub_http, token.as_deref()).await;
+                        re_render_agent_configs(
+                            &repo_root_render,
+                            &hub_http_render,
+                            token_render.as_deref(),
+                        )
+                        .await;
                     }
                 }
             });
+            // Start proactive context watcher (best-effort — never fails the bridge).
+            let ctx_watcher =
+                match start_context_watcher(repo_root.clone(), &hub_http, token.as_deref()).await {
+                    Ok(w) => {
+                        eprintln!("glia: context watcher started");
+                        Some(w)
+                    }
+                    Err(e) => {
+                        eprintln!("glia: context watcher unavailable: {e}");
+                        None
+                    }
+                };
+
             let result = glia_bridge::run_bridge_with_handler(cfg, Some(config_tx))
                 .await
                 .map_err(anyhow::Error::from);
             render_task.abort();
+            if let Some(w) = ctx_watcher {
+                w.stop().await;
+            }
             result
         }
         Cmd::Sync {
@@ -879,6 +907,63 @@ async fn run_save_skill(
     Ok(())
 }
 
+/// Start a proactive context watcher for the bridge command (Phase 3.1).
+async fn start_context_watcher(
+    repo_root: std::path::PathBuf,
+    hub_url: &str,
+    token: Option<&str>,
+) -> anyhow::Result<glia_context::ContextWatcher> {
+    use glia_context::{ContextLoader, ContextWatcher, DefaultStackDetector, StackDetector};
+    use glia_synth::StubSynthesizer;
+    use std::sync::Arc;
+    let client = glia_helix::HelixClient::connect(Some(hub_url), token)?;
+    let embedder = Arc::new(glia_embed::Embedder::new()?);
+    let synth: Arc<dyn glia_synth::Synthesizer> = Arc::new(StubSynthesizer::default());
+    let detector: Arc<dyn StackDetector> = Arc::new(DefaultStackDetector);
+    let loader = Arc::new(ContextLoader::new(client, embedder, synth, detector));
+    ContextWatcher::start(repo_root, loader)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Get old file content from git HEAD (best-effort — empty string on failure).
+fn git_show_head(file_path: &str) -> String {
+    let rel = std::process::Command::new("git")
+        .args(["ls-files", "--full-name", "--", file_path])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| file_path.to_owned());
+    std::process::Command::new("git")
+        .args(["show", &format!("HEAD:{rel}")])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// Compute a unified diff between `old` and `new` using the `similar` crate.
+fn compute_unified_diff(old: &str, new: &str, path: &str) -> String {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(old, new);
+    let mut out = format!("--- a/{path}\n+++ b/{path}\n");
+    for group in diff.grouped_ops(3) {
+        for op in &group {
+            for change in diff.iter_changes(op) {
+                match change.tag() {
+                    ChangeTag::Delete => out.push_str(&format!("-{change}")),
+                    ChangeTag::Insert => out.push_str(&format!("+{change}")),
+                    ChangeTag::Equal => out.push_str(&format!(" {change}")),
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Call `POST /notify/config-changed` on the Hub (best-effort — never fails).
 async fn notify_hub_config_changed(
     hub: &str,
@@ -1209,10 +1294,37 @@ async fn run_review(
 ) -> anyhow::Result<()> {
     let queue = glia_review::ReviewQueue::open(&repo_root);
     match op {
-        ReviewOp::Capture { file, diff } => {
-            let diff_str = diff.unwrap_or_default();
-            let item = queue.capture(&file, &diff_str).await?;
-            println!("Captured review item {} for '{}'.", item.id, item.file_path);
+        ReviewOp::Capture { file, stdin, diff } => {
+            if stdin {
+                // Read PostToolUse hook JSON from stdin.
+                let mut input = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+                let v: serde_json::Value = serde_json::from_str(&input).unwrap_or_default();
+                let tool_name = v["tool_name"].as_str().unwrap_or("");
+                if !matches!(tool_name, "Write" | "Edit" | "MultiEdit") {
+                    return Ok(());
+                }
+                let file_path_str = v["tool_input"]["file_path"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned();
+                if file_path_str.is_empty() {
+                    return Ok(());
+                }
+                let new_content = std::fs::read_to_string(&file_path_str).unwrap_or_default();
+                let old_content = git_show_head(&file_path_str);
+                let diff_str = compute_unified_diff(&old_content, &new_content, &file_path_str);
+                let item = queue.capture(&file_path_str, &diff_str).await?;
+                eprintln!(
+                    "glia: captured a correction for '{}' → 'glia review approve {}' to teach it",
+                    item.file_path, item.id
+                );
+            } else {
+                let file_path = file.unwrap_or_default();
+                let diff_str = diff.unwrap_or_default();
+                let item = queue.capture(&file_path, &diff_str).await?;
+                println!("Captured review item {} for '{}'.", item.id, item.file_path);
+            }
         }
         ReviewOp::List => {
             let items = queue.list_pending().await?;
@@ -1243,6 +1355,7 @@ async fn run_review(
                         source: source.clone(),
                         embedding: vec![],
                         updated_at: item.created_at.clone(),
+                        usage_count: 1,
                     };
                     client
                         .upsert_skill(&source, skill)
@@ -1260,11 +1373,30 @@ async fn run_review(
                 source: source.clone(),
                 embedding,
                 updated_at: item.created_at.clone(),
+                usage_count: 1,
             };
             client
                 .upsert_skill(&source, skill)
                 .await
                 .map_err(|e| anyhow::anyhow!("skill upsert failed: {e}"))?;
+            // Reweight: bump Hub-side usage counter so the skill ranks higher.
+            if let Err(e) = client.bump_usage(&source, 1).await {
+                eprintln!("warn: bump_usage: {e}");
+            }
+            // Reweight: wire graph edges for file's detected stacks.
+            {
+                use glia_context::{DefaultStackDetector, StackDetector};
+                let detector = DefaultStackDetector;
+                let file_path = std::path::Path::new(&item.file_path);
+                for stack_id in detector.detect(file_path) {
+                    if let Err(e) = client
+                        .relate_skill_applies_to_stack(&source, &stack_id)
+                        .await
+                    {
+                        eprintln!("warn: relate({stack_id}): {e}");
+                    }
+                }
+            }
             println!("Approved and upserted skill '{source}'.");
         }
         ReviewOp::Reject { id } => {
