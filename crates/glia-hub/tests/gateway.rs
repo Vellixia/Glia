@@ -14,7 +14,7 @@ async fn spawn_hub() -> String {
     tokio::spawn(async move {
         axum::serve(
             listener,
-            hub_router().into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            hub_router(None, None).into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
         .await
         .unwrap();

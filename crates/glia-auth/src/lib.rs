@@ -319,4 +319,236 @@ mod tests {
         assert_eq!(auth.state, "xyz");
         w.shutdown().await;
     }
+
+    #[tokio::test]
+    async fn callback_missing_state_returns_missing_param_state() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+        let wait_task = {
+            let w = w.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let url = format!("http://127.0.0.1:{}/callback?code=abc", port);
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 400);
+        let err = wait_task.await.unwrap().unwrap_err();
+        assert!(matches!(err, AuthError::MissingParam("state")));
+        w.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn error_and_code_present_error_wins() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+        let wait_task = {
+            let w = w.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let url = format!(
+            "http://127.0.0.1:{}/callback?error=denied&code=abc&state=x",
+            port
+        );
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 400);
+        let err = wait_task.await.unwrap().unwrap_err();
+        assert!(matches!(err, AuthError::OAuthError(_)));
+        w.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn error_without_description_uses_empty_default() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+        let wait_task = {
+            let w = w.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let url = format!("http://127.0.0.1:{}/callback?error=denied", port);
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 400);
+        let err = wait_task.await.unwrap().unwrap_err();
+        // Should contain "denied: " (with empty description).
+        let msg = format!("{}", err);
+        assert!(msg.contains("denied"));
+        w.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn url_encoded_code_decoded_correctly() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+        let wait_task = {
+            let w = w.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let url = format!(
+            "http://127.0.0.1:{}/callback?code=abc%2Fdef%3D123&state=x",
+            port
+        );
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let auth = wait_task.await.unwrap().unwrap();
+        assert_eq!(auth.code, "abc/def=123");
+        w.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn very_long_code_accepted() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+        let wait_task = {
+            let w = w.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let long_code = "c".repeat(1000);
+        let url = format!(
+            "http://127.0.0.1:{}/callback?code={}&state=x",
+            port, long_code
+        );
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let auth = wait_task.await.unwrap().unwrap();
+        assert_eq!(auth.code.len(), 1000);
+        w.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn post_callback_returns_405() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let url = format!("http://127.0.0.1:{}/callback?code=x&state=y", port);
+        let resp = reqwest::Client::new().post(&url).send().await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        waiter.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn wrong_path_returns_404() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let url = format!("http://127.0.0.1:{}/callback/extra", port);
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        waiter.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn missing_both_code_and_state_returns_missing_code() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+        let wait_task = {
+            let w = w.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let url = format!("http://127.0.0.1:{}/callback?foo=bar", port);
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 400);
+        let err = wait_task.await.unwrap().unwrap_err();
+        assert!(matches!(err, AuthError::MissingParam("code")));
+        w.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn multiple_waiters_different_ports_independent() {
+        let waiter1 = spawn_waiter(0).await;
+        let waiter2 = spawn_waiter(0).await;
+        let port1 = waiter1.addr().port();
+        let port2 = waiter2.addr().port();
+        assert_ne!(port1, port2, "should get different ports");
+
+        let w1 = std::sync::Arc::new(waiter1);
+        let w2 = std::sync::Arc::new(waiter2);
+        let wait1 = {
+            let w = w1.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+        let wait2 = {
+            let w = w2.clone();
+            tokio::spawn(async move { w.wait_for_callback(AUTH_TIMEOUT).await })
+        };
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Send callback to waiter1 only.
+        let url = format!("http://127.0.0.1:{}/callback?code=a&state=b", port1);
+        reqwest::get(&url).await.unwrap();
+
+        let auth1 = wait1.await.unwrap().unwrap();
+        assert_eq!(auth1.code, "a");
+
+        // waiter2 should still be waiting — cancel it.
+        w2.shutdown().await;
+        drop(wait2);
+        w1.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn late_callback_after_timeout_is_noop() {
+        let waiter = spawn_waiter(0).await;
+        let port = waiter.addr().port();
+        let w = std::sync::Arc::new(waiter);
+
+        // Timeout first.
+        let result = w.wait_for_callback(Duration::from_millis(50)).await;
+        assert!(matches!(result, Err(AuthError::Timeout(_))));
+
+        // Late callback arrives.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let url = format!("http://127.0.0.1:{}/callback?code=late&state=s", port);
+        let resp = reqwest::get(&url).await.unwrap();
+        // The callback handler still responds 200, but the waiter already
+        // returned Timeout. The late callback is a no-op for the waiter.
+        assert_eq!(resp.status(), 200);
+        w.shutdown().await;
+    }
+
+    #[test]
+    fn process_callback_empty_code_accepted() {
+        // Documents that empty string code passes (Some("") is not None).
+        let q = CallbackQuery {
+            code: Some(String::new()),
+            state: Some("x".to_string()),
+            error: None,
+            error_description: None,
+        };
+        let result = process_callback(q);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().code, "");
+    }
+
+    #[test]
+    fn process_callback_empty_state_accepted() {
+        let q = CallbackQuery {
+            code: Some("abc".to_string()),
+            state: Some(String::new()),
+            error: None,
+            error_description: None,
+        };
+        let result = process_callback(q);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().state, "");
+    }
+
+    #[test]
+    fn process_callback_both_empty_accepted() {
+        let q = CallbackQuery {
+            code: Some(String::new()),
+            state: Some(String::new()),
+            error: None,
+            error_description: None,
+        };
+        let result = process_callback(q);
+        assert!(result.is_ok());
+    }
 }

@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "AI self-authoring of skill markdown (T13: `glia_save_skill`, V11)"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
 glia-cache = { path = "../glia-cache" }
 serde = { version = "1", features = ["derive"] }

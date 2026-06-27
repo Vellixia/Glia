@@ -33,7 +33,7 @@ cross-toolchain is not pre-installed.
 We follow [SemVer](https://semver.org/spec/v2.0.0.html):
 
 - **MAJOR** — breaking change to the `glia_action` contract, the WS
-  gateway protocol, or the on-disk SurrealDB schema.
+  gateway protocol, or the on-disk HelixDB schema.
 - **MINOR** — new CLI subcommand, new `glia-hub` endpoint, new
   community-catalog API, new optional sidecar.
 - **PATCH** — bug fix, perf gain, doc fix, or any change that does

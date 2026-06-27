@@ -419,4 +419,132 @@ mod tests {
         assert_eq!(back.as_deref(), Some(&b"hello"[..]));
         c.delete(&key).await.unwrap();
     }
+
+    #[tokio::test]
+    async fn empty_string_key_put_get() {
+        let c = InMemoryCache::new();
+        c.put_bytes("", b"empty-key-val", DEFAULT_TTL)
+            .await
+            .unwrap();
+        assert_eq!(
+            c.get_bytes("").await.unwrap(),
+            Some(b"empty-key-val".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn unicode_key_put_get() {
+        let c = InMemoryCache::new();
+        c.put_bytes("oauth::creds::héllo::access", b"v", DEFAULT_TTL)
+            .await
+            .unwrap();
+        assert_eq!(
+            c.get_bytes("oauth::creds::héllo::access").await.unwrap(),
+            Some(b"v".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_value_zero_bytes_roundtrip() {
+        let c = InMemoryCache::new();
+        c.put_bytes("k", b"", DEFAULT_TTL).await.unwrap();
+        assert_eq!(c.get_bytes("k").await.unwrap(), Some(vec![]));
+    }
+
+    #[tokio::test]
+    async fn ttl_zero_in_memory_immediate_expiry() {
+        let c = InMemoryCache::new();
+        c.put_bytes("k", b"v", Duration::ZERO).await.unwrap();
+        // TTL=0 means expires_at = now. Any get after this point returns None.
+        // There may be a tiny window where Instant::now() == expires_at, so
+        // we sleep a tiny bit to ensure we're past.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert!(c.get_bytes("k").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_missing_key_idempotent_no_error() {
+        let c = InMemoryCache::new();
+        // Deleting a key that was never set should succeed.
+        c.delete("never-existed").await.unwrap();
+        assert!(c.get_bytes("never-existed").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn sweeper_with_no_expired_keeps_all() {
+        let c = InMemoryCache::new();
+        c.start_sweeper(Duration::from_millis(20)).await;
+        c.put_bytes("k1", b"v1", DEFAULT_TTL).await.unwrap();
+        c.put_bytes("k2", b"v2", DEFAULT_TTL).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        // Both should still be present (not expired).
+        assert!(c.get_bytes("k1").await.unwrap().is_some());
+        assert!(c.get_bytes("k2").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn start_sweeper_twice_spawns_once() {
+        let c = InMemoryCache::new();
+        c.start_sweeper(Duration::from_secs(60)).await;
+        c.start_sweeper(Duration::from_secs(60)).await;
+        // Should not panic or create duplicate sweepers.
+        let guard = c.sweep.lock().await;
+        assert!(guard.is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_set_get_same_key() {
+        use std::sync::Arc;
+        let c = Arc::new(InMemoryCache::new());
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let cc = c.clone();
+            handles.push(tokio::spawn(async move {
+                cc.put_bytes("shared", format!("v{i}").as_bytes(), DEFAULT_TTL)
+                    .await
+                    .unwrap();
+                cc.get_bytes("shared").await.unwrap()
+            }));
+        }
+        for h in handles {
+            let _ = h.await.unwrap();
+        }
+        // Final value is some value from one of the writers.
+        assert!(c.get_bytes("shared").await.unwrap().is_some());
+    }
+
+    #[test]
+    fn hash_query_empty_string_deterministic() {
+        let h1 = keys::hash_query("");
+        let h2 = keys::hash_query("");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+    }
+
+    #[test]
+    fn hash_query_unicode_deterministic() {
+        let h1 = keys::hash_query("héllo 🐍");
+        let h2 = keys::hash_query("héllo 🐍");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+    }
+
+    #[test]
+    fn empty_cred_id_key_has_double_colon() {
+        // format!("oauth::creds::{}::access", "") = "oauth::creds::::access"
+        let key = keys::oauth_access_token("");
+        assert_eq!(key, "oauth::creds::::access");
+    }
+
+    #[tokio::test]
+    async fn get_typed_corrupted_bytes_returns_serde_error() {
+        let c = InMemoryCache::new();
+        // Put raw invalid JSON bytes.
+        c.put_bytes("bad", b"{not valid json", DEFAULT_TTL)
+            .await
+            .unwrap();
+        let result: Result<Option<CachedValue<String>>, _> = get_typed(&c, "bad").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CacheError::Serde(_)));
+    }
 }

@@ -7,12 +7,14 @@ rust-version.workspace = true
 description = "Unified glia_action endpoint — discover+exec+dep-check, intent classification, parallel orchestration"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
+glia-bash = { path = "../glia-bash" }
+glia-sandbox = { path = "../glia-sandbox" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "process"] }
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"

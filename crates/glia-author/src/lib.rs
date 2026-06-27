@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use glia_db::{GliaDb, Skill, Stack};
+use glia_helix::{HelixClient, Skill, Stack};
 use serde::{Deserialize, Serialize};
 
 /// Frontmatter (YAML at the top of a skill markdown file).
@@ -95,19 +95,13 @@ pub enum AuthorError {
     AlreadyExists(String),
     /// DB operation failed.
     #[error("db: {0}")]
-    Db(#[from] Box<glia_db::DbError>),
+    Db(#[from] glia_helix::HelixError),
     /// Embedder failed.
     #[error("embed: {0}")]
     Embed(#[from] glia_embed::EmbedError),
     /// I/O failed.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-}
-
-impl From<glia_db::DbError> for AuthorError {
-    fn from(e: glia_db::DbError) -> Self {
-        AuthorError::Db(Box::new(e))
-    }
 }
 
 /// Pluggable authoring backend.
@@ -333,7 +327,7 @@ fn titlecase(s: &str) -> String {
 ///    an `applies_to_stack` edge.
 pub async fn register(
     doc: &SkillDoc,
-    db: &GliaDb,
+    db: &HelixClient,
     embedder: &glia_embed::Embedder,
 ) -> Result<String, AuthorError> {
     let id = format!("local::{}", doc.frontmatter.name);
@@ -380,7 +374,7 @@ impl SkillAuthor {
         description: &str,
         hint_name: Option<&str>,
         hint_stacks: &[String],
-        db: &GliaDb,
+        db: &HelixClient,
         embedder: &glia_embed::Embedder,
     ) -> Result<String, AuthorError> {
         let doc = self
@@ -394,12 +388,13 @@ impl SkillAuthor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::Connection;
 
-    async fn empty_db() -> Arc<GliaDb> {
-        let db = Arc::new(GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
-        db
+    async fn try_db() -> Option<HelixClient> {
+        let client = HelixClient::connect(None, None).ok()?;
+        if client.ping().await.is_err() {
+            return None;
+        }
+        Some(client)
     }
 
     fn emb() -> Option<glia_embed::Embedder> {
@@ -468,7 +463,10 @@ mod tests {
     #[tokio::test]
     async fn register_inserts_skill_with_embedding() {
         let Some(emb) = emb() else { return };
-        let db = empty_db().await;
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let doc = SkillDoc {
             frontmatter: SkillFrontmatter::new("use-zustand", "Use zustand").with_stack("nextjs"),
             body: "Use zustand for React state.".into(),
@@ -485,7 +483,10 @@ mod tests {
     #[tokio::test]
     async fn register_rejects_duplicate() {
         let Some(emb) = emb() else { return };
-        let db = empty_db().await;
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let doc = SkillDoc {
             frontmatter: SkillFrontmatter::new("dup", "x"),
             body: "x".into(),
@@ -498,7 +499,10 @@ mod tests {
     #[tokio::test]
     async fn skill_author_save_end_to_end() {
         let Some(emb) = emb() else { return };
-        let db = empty_db().await;
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let sa = SkillAuthor::new(Arc::new(TemplateAuthor));
         let id = sa
             .save(
@@ -513,5 +517,60 @@ mod tests {
         assert_eq!(id, "local::use-zustand");
         let skill = db.get_skill(&id).await.unwrap().unwrap();
         assert!(skill.content.contains("zustand"));
+    }
+
+    #[test]
+    fn slugify_idempotent_on_valid_slug() {
+        assert_eq!(slugify("use-zustand"), "use-zustand");
+    }
+
+    #[test]
+    fn slugify_slashes_and_dots() {
+        assert_eq!(slugify("a/b"), "a-b");
+        assert_eq!(slugify("v1.2"), "v1-2");
+    }
+
+    #[tokio::test]
+    async fn template_author_empty_description_slug_untitled() {
+        let a = TemplateAuthor;
+        let doc = a.author("", None, &[]).await.unwrap();
+        assert_eq!(doc.frontmatter.name, "untitled");
+    }
+
+    #[tokio::test]
+    async fn template_author_whitespace_description() {
+        let a = TemplateAuthor;
+        let doc = a.author("   ", None, &[]).await.unwrap();
+        assert_eq!(doc.frontmatter.name, "untitled");
+    }
+
+    #[test]
+    fn author_error_display() {
+        let e = AuthorError::AlreadyExists("x".into());
+        assert!(format!("{}", e).contains("already exists"));
+        let e = AuthorError::Http("x".into());
+        assert!(format!("{}", e).contains("http"));
+        let e = AuthorError::Parse("x".into());
+        assert!(format!("{}", e).contains("parse"));
+    }
+
+    #[test]
+    fn titlecase_empty_string() {
+        assert_eq!(titlecase(""), "");
+    }
+
+    #[test]
+    fn titlecase_single_word() {
+        assert_eq!(titlecase("hello"), "Hello");
+    }
+
+    #[test]
+    fn skill_frontmatter_new_and_with_stack() {
+        let fm = SkillFrontmatter::new("test", "desc");
+        assert_eq!(fm.name, "test");
+        assert_eq!(fm.description, "desc");
+        assert!(fm.stacks.is_empty());
+        let fm2 = fm.with_stack("nextjs");
+        assert_eq!(fm2.stacks, vec!["nextjs"]);
     }
 }

@@ -178,7 +178,7 @@ pub struct UseResult {
 pub async fn use_tool(
     source: &dyn CatalogSource,
     name: &str,
-    db: &glia_db::GliaDb,
+    db: &glia_helix::HelixClient,
     embedder: &glia_embed::Embedder,
 ) -> Result<UseResult, CatalogError> {
     let index = source.fetch_index().await?;
@@ -193,7 +193,7 @@ pub async fn use_tool(
     let now = chrono::Utc::now().to_rfc3339();
     db.upsert_skill(
         &skill_id,
-        glia_db::Skill {
+        glia_helix::Skill {
             content: content.clone(),
             source: entry.path.clone(),
             embedding: vector,
@@ -205,7 +205,7 @@ pub async fn use_tool(
     for stack in &entry.stacks {
         db.upsert_stack(
             stack,
-            glia_db::Stack {
+            glia_helix::Stack {
                 name: stack.clone(),
             },
         )
@@ -232,7 +232,6 @@ pub async fn list_tools(source: &dyn CatalogSource) -> Result<Vec<CatalogEntry>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glia_db::Connection;
     use std::collections::HashMap;
 
     fn entry(name: &str, creds: Vec<String>) -> CatalogEntry {
@@ -287,14 +286,24 @@ mod tests {
         assert!(content.contains("Linear"));
     }
 
+    async fn try_db() -> Option<glia_helix::HelixClient> {
+        let client = glia_helix::HelixClient::connect(None, None).ok()?;
+        if client.ping().await.is_err() {
+            return None;
+        }
+        Some(client)
+    }
+
     #[tokio::test]
     async fn use_tool_registers_community_skill() {
         let Some(emb) = glia_embed::Embedder::try_new() else {
             return;
         };
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let s = stub();
-        let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
         let result = use_tool(&s, "linear-create-issue", &db, &emb)
             .await
             .unwrap();
@@ -309,9 +318,11 @@ mod tests {
         let Some(emb) = glia_embed::Embedder::try_new() else {
             return;
         };
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let s = stub();
-        let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
         let err = use_tool(&s, "nope", &db, &emb).await.unwrap_err();
         assert!(matches!(err, CatalogError::NotFound(_)));
     }
@@ -329,9 +340,11 @@ mod tests {
         let Some(emb) = glia_embed::Embedder::try_new() else {
             return;
         };
+        let Some(db) = try_db().await else {
+            eprintln!("SKIP: no helixdb");
+            return;
+        };
         let s = stub();
-        let db = std::sync::Arc::new(glia_db::GliaDb::connect(Connection::Memory).await.unwrap());
-        db.init_schema().await.unwrap();
         use_tool(&s, "linear-create-issue", &db, &emb)
             .await
             .unwrap();
@@ -349,5 +362,59 @@ mod tests {
         let j = serde_json::to_string(&e).unwrap();
         let back: CatalogEntry = serde_json::from_str(&j).unwrap();
         assert_eq!(back, e);
+    }
+
+    #[tokio::test]
+    async fn stub_fetch_index_empty_tools() {
+        let index = CatalogIndex {
+            version: 1,
+            tools: vec![],
+        };
+        let s = StubCatalog {
+            index,
+            skills: HashMap::new(),
+        };
+        let tools = list_tools(&s).await.unwrap();
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn find_is_case_sensitive() {
+        let index = CatalogIndex {
+            version: 1,
+            tools: vec![entry("Linear-Create-Issue", vec![])],
+        };
+        assert!(index.find("Linear-Create-Issue").is_some());
+        assert!(index.find("linear-create-issue").is_none());
+    }
+
+    #[test]
+    fn find_tool_name_with_special_chars() {
+        let index = CatalogIndex {
+            version: 1,
+            tools: vec![entry("tool:v2", vec![])],
+        };
+        assert!(index.find("tool:v2").is_some());
+        assert!(index.find("tool-v2").is_none());
+    }
+
+    #[test]
+    fn catalog_error_display() {
+        let e = CatalogError::NotFound("x".into());
+        assert!(format!("{}", e).contains("not found"));
+        let e = CatalogError::Http("x".into());
+        assert!(format!("{}", e).contains("http"));
+        let bad: Result<u32, _> = serde_json::from_str("bad");
+        let e = CatalogError::Serde(bad.unwrap_err());
+        assert!(format!("{}", e).contains("serde"));
+    }
+
+    #[test]
+    fn catalog_entry_with_empty_stacks_and_creds() {
+        let e = entry("empty-tool", vec![]);
+        let j = serde_json::to_string(&e).unwrap();
+        let back: CatalogEntry = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, e);
+        assert!(back.creds.is_empty());
     }
 }

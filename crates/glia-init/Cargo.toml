@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "`glia init` repo scan + stack detect + batch auth (T19, V8)"
 
 [dependencies]
-glia-db = { path = "../glia-db" }
+glia-helix = { path = "../glia-helix" }
 glia-chunk = { path = "../glia-chunk" }
 glia-hooks = { path = "../glia-hooks" }
 serde = { version = "1", features = ["derive"] }

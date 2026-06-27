@@ -40,18 +40,36 @@ impl Fs {
     }
 
     /// Resolve `path` relative to root, rejecting traversals.
+    /// If the file exists, also canonicalize to detect symlink escapes
+    /// (a symlink inside root pointing to /etc/passwd would survive
+    /// lexical normalization but fail canonicalize).
     fn resolve(&self, path: &str) -> Result<PathBuf, FsError> {
         let p = Path::new(path);
-        let joined = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            self.root.join(p)
-        };
+        // Absolute paths are always caller errors — the API expects paths
+        // relative to the project root. Reject early before normalization.
+        if p.is_absolute() {
+            return Err(FsError::PathEscape(path.to_string()));
+        }
+        let joined = self.root.join(p);
         // Normalize without requiring the file to exist.
         let normalized = normalize(&joined);
         // Check the normalized path starts with root.
         if !normalized.starts_with(&self.root) {
             return Err(FsError::PathEscape(path.to_string()));
+        }
+        // Symlink detection: canonicalize both root and the resolved path
+        // and compare. On Windows, canonicalize returns `\\?\` UNC paths
+        // which don't starts_with the un-canonicalized root, so we must
+        // canonicalize the root too.
+        if normalized.exists() {
+            let canonical_root = self.root.canonicalize().unwrap_or(self.root.clone());
+            if let Ok(canonical) = normalized.canonicalize()
+                && !canonical.starts_with(&canonical_root)
+            {
+                return Err(FsError::PathEscape(path.to_string()));
+            }
+            // canonicalize() may fail on permission errors or UNC paths;
+            // fall back to the lexical check.
         }
         Ok(normalized)
     }

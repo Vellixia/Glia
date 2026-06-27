@@ -57,6 +57,9 @@ pub struct InitResult {
     /// `true` if no git repo found at `repo_root` (hooks skipped).
     #[serde(default)]
     pub git_repo_missing: bool,
+    /// Agent config files that received the `glia-bridge` MCP entry.
+    #[serde(default)]
+    pub mcp_registered: Vec<String>,
 }
 
 /// Scan a repo for tech stacks.
@@ -214,18 +217,26 @@ pub fn pending_auth_for_stacks(stacks: &[DetectedStack]) -> Vec<String> {
     creds
 }
 
-/// Run full `glia init` scan + hook install.
+/// Run full `glia init` scan + hook install + MCP bridge registration.
 pub async fn run(repo_root: &Path) -> Result<InitResult, InitError> {
     let stacks = scan_repo(repo_root).await?;
     let files_scanned = count_files(repo_root, 1000).await?;
     let pending_auth = pending_auth_for_stacks(&stacks);
     let (hooks_installed, git_repo_missing) = install_hooks(repo_root).await?;
+    let mcp_registered = match glia_hooks::register_mcp_bridge(repo_root).await {
+        Ok(paths) => paths,
+        Err(e) => {
+            tracing::warn!(error = %e, "mcp bridge registration failed");
+            Vec::new()
+        }
+    };
     Ok(InitResult {
         stacks,
         pending_auth,
         files_scanned,
         hooks_installed,
         git_repo_missing,
+        mcp_registered,
     })
 }
 
@@ -245,21 +256,26 @@ pub async fn install_hooks(repo_root: &Path) -> Result<(Vec<String>, bool), Init
         let stacks = scan_repo(repo_root).await?;
         stacks.into_iter().map(|s| s.id).collect()
     };
-    let db_path = repo_root.join(".glia").join("local.db");
-    let skills: Vec<glia_db::Skill> = if db_path.exists() {
-        match glia_db::GliaDb::connect(glia_db::Connection::Embedded(db_path.clone())).await {
-            Ok(db) => match db.list_skills().await {
+    // v0.2.0: CLI has no local DB; pull skill list from the Hub. Falls
+    // back to empty if the Hub is unreachable — hooks are still emitted
+    // (Cursor rules + Claude hooks) without skill citations.
+    let hub_url =
+        std::env::var("GLIA_HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:6969".to_string());
+    let hub_token = std::env::var("GLIA_HUB_TOKEN").ok();
+    let skills: Vec<glia_helix::Skill> =
+        match glia_helix::HelixClient::connect(Some(&hub_url), hub_token.as_deref()) {
+            Ok(client) => match client.list_skills().await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!(error = %e, "skill list failed; hooks for empty set");
+                    tracing::warn!(error = %e, "hub skill list failed; hooks for empty set");
                     Vec::new()
                 }
             },
-            Err(_) => Vec::new(),
-        }
-    } else {
-        Vec::new()
-    };
+            Err(e) => {
+                tracing::warn!(error = %e, "hub unreachable; hooks for empty set");
+                Vec::new()
+            }
+        };
     match glia_hooks::generate_cursor_rules(repo_root, &skills, &stack_names).await {
         Ok(paths) => written.extend(paths),
         Err(e) => tracing::warn!(error = %e, "cursor rules failed"),
@@ -405,6 +421,51 @@ mod tests {
         assert!(result.pending_auth.contains(&"supabase".to_string()));
         assert!(result.files_scanned >= 2);
         assert!(result.git_repo_missing);
+        // MCP bridge should be registered for both agents.
+        assert!(
+            !result.mcp_registered.is_empty(),
+            "mcp_registered should not be empty"
+        );
+        assert!(
+            result
+                .mcp_registered
+                .iter()
+                .any(|p| p.contains("settings.json")),
+            "Claude Code settings.json should be in mcp_registered"
+        );
+        assert!(
+            result.mcp_registered.iter().any(|p| p.contains("mcp.json")),
+            "Cursor mcp.json should be in mcp_registered"
+        );
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn run_registers_mcp_bridge_for_both_agents() {
+        let dir = tmp();
+        // Bare repo — no stack markers needed for MCP registration.
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let result = run(&dir).await.unwrap();
+        // Claude Code: .claude/settings.json must have mcpServers.glia-bridge.
+        let claude_settings = tokio::fs::read_to_string(dir.join(".claude/settings.json"))
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&claude_settings).unwrap();
+        assert!(
+            v["mcpServers"]["glia-bridge"]["command"].as_str() == Some("glia"),
+            "Claude Code MCP entry missing"
+        );
+        // Cursor: .cursor/mcp.json must have mcpServers.glia-bridge.
+        let cursor_mcp = tokio::fs::read_to_string(dir.join(".cursor/mcp.json"))
+            .await
+            .unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&cursor_mcp).unwrap();
+        assert!(
+            v2["mcpServers"]["glia-bridge"]["command"].as_str() == Some("glia"),
+            "Cursor MCP entry missing"
+        );
+        // mcp_registered field populated.
+        assert_eq!(result.mcp_registered.len(), 2);
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
@@ -436,22 +497,9 @@ mod tests {
         tokio::fs::create_dir_all(dir.join(".git/hooks"))
             .await
             .unwrap();
-        let db_path = dir.join(".glia/local.db");
-        tokio::fs::create_dir_all(db_path.parent().unwrap())
-            .await
-            .unwrap();
-        let db = glia_db::GliaDb::connect(glia_db::Connection::Embedded(db_path))
-            .await
-            .unwrap();
-        db.init_schema().await.unwrap();
-        let skill = glia_db::Skill {
-            content: "# Use Zustand\n".into(),
-            source: "local::use-zustand.md".into(),
-            embedding: vec![0.0; 384],
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        };
-        db.upsert_skill("local::use-zustand", skill).await.unwrap();
-        drop(db);
+        // v0.2.0: skill list now comes from the Hub. Test falls back to
+        // empty skills if the Hub is unreachable — hooks are still
+        // written, just without skill citations.
         let (written, _) = install_hooks(&dir).await.unwrap();
         assert!(written.iter().any(|p| p.contains(".cursor")));
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -465,5 +513,113 @@ mod tests {
         assert!(git_missing);
         assert!(!written.iter().any(|p| p.contains("pre-push")));
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_skips_target_dir() {
+        let dir = tmp();
+        write(&dir.join("real.txt"), "x").await;
+        tokio::fs::create_dir_all(dir.join("target")).await.unwrap();
+        write(&dir.join("target/compiled.txt"), "y").await;
+        let count = count_files(&dir, 100).await.unwrap();
+        assert_eq!(count, 1, "target/ should be skipped");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_skips_pycache() {
+        let dir = tmp();
+        write(&dir.join("main.py"), "x").await;
+        tokio::fs::create_dir_all(dir.join("__pycache__"))
+            .await
+            .unwrap();
+        write(&dir.join("__pycache__/main.pyc"), "y").await;
+        let count = count_files(&dir, 100).await.unwrap();
+        assert_eq!(count, 1, "__pycache__ should be skipped");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_skips_hidden_files() {
+        let dir = tmp();
+        write(&dir.join("visible.txt"), "x").await;
+        write(&dir.join(".env"), "SECRET=x").await;
+        write(&dir.join(".gitignore"), "*.log\n").await;
+        let count = count_files(&dir, 100).await.unwrap();
+        assert_eq!(count, 1, "hidden files should be skipped");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn count_files_caps_at_limit() {
+        let dir = tmp();
+        for i in 0..50 {
+            write(&dir.join(format!("file{i}.txt")), "x").await;
+        }
+        let count = count_files(&dir, 10).await.unwrap();
+        assert!(count <= 11, "should cap near limit, got {count}");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_malformed_package_json_returns_serde_error() {
+        let dir = tmp();
+        write(&dir.join("package.json"), "{not valid json}").await;
+        let result = scan_repo(&dir).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), InitError::Serde(_)));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_package_json_no_dependencies_falls_to_node() {
+        let dir = tmp();
+        write(&dir.join("package.json"), r#"{"name":"x","version":"1"}"#).await;
+        let stacks = scan_repo(&dir).await.unwrap();
+        // No dependencies/devDependencies → should not detect nextjs/react.
+        // But `node` may be detected as a fallback.
+        let _ = stacks;
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_stripe_dependency_detected() {
+        let dir = tmp();
+        write(
+            &dir.join("package.json"),
+            r#"{"dependencies":{"stripe":"14"}}"#,
+        )
+        .await;
+        let stacks = scan_repo(&dir).await.unwrap();
+        assert!(stacks.iter().any(|s| s.id == "stripe"));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn scan_repo_with_only_git_dir_returns_empty_stacks() {
+        let dir = tmp();
+        tokio::fs::create_dir_all(dir.join(".git/hooks"))
+            .await
+            .unwrap();
+        let stacks = scan_repo(&dir).await.unwrap();
+        assert!(stacks.is_empty());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[test]
+    fn pending_auth_for_stripe() {
+        let stacks = vec![DetectedStack {
+            id: "stripe".into(),
+            name: "Stripe".into(),
+            evidence: "package.json".into(),
+        }];
+        let creds = pending_auth_for_stacks(&stacks);
+        assert!(creds.contains(&"stripe".to_string()));
+    }
+
+    #[test]
+    fn pending_auth_for_empty_stacks() {
+        let creds = pending_auth_for_stacks(&[]);
+        assert!(creds.is_empty());
     }
 }

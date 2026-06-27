@@ -10,6 +10,7 @@ description = "Sandboxed glia_bash via allow-list + path boundary (v1 cross-plat
 thiserror = "2"
 tracing = "0.1"
 regex = "1"
+shlex = "1"
 tokio = { version = "1", features = ["process", "io-util", "rt"] }
 
 [dev-dependencies]

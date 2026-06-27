@@ -16,7 +16,7 @@ This brings the full stack in under two minutes:
 | Service    | Host port | Container port | Healthcheck |
 |------------|-----------|----------------|-------------|
 | `glia-hub` | `3000`    | `3000`         | — (up immediately) |
-| SurrealDB  | `8000`    | `8000`         | — (no shell in image) |
+| HelixDB  | `8000`    | `8000`         | — (no shell in image) |
 | OpenBao    | `8201`    | `8200`         | `wget /v1/sys/health` |
 | Redis      | `6379`    | `6379`         | `redis-cli ping` |
 
@@ -25,7 +25,7 @@ docker compose ps
 # glia-hub     Up
 # openbao      Up (healthy)
 # redis        Up (healthy)
-# surrealdb    Up
+# HelixDB    Up
 ```
 
 ## Build the Hub image
@@ -102,7 +102,7 @@ Hub returns `AUTH_TIMEOUT` and the CLI surfaces it.
 
 ```mermaid
 flowchart LR
-    HUB[glia-hub] --> SDB[("SurrealDB<br/>server")]
+    HUB[glia-hub] --> SDB[("HelixDB<br/>server")]
     HUB --> BAO["OpenBao<br/>response-wrapping"]
     HUB --> REDIS["Redis<br/>synthesis cache"]
     HUB --> SAND[glia-sandbox]
@@ -118,7 +118,7 @@ flowchart LR
 
 | Store | Backend | Holds |
 |-------|---------|-------|
-| Hub DB | SurrealDB (server-mode, in-memory for dev) | Skills, tools, stacks, edges — Hub-authoritative |
+| Hub DB | HelixDB (server-mode, in-memory for dev) | Skills, tools, stacks, edges — Hub-authoritative |
 | Cache | Redis | Synthesis responses (≤2 ms hot path) |
 | Secrets | OpenBao | Refresh + access tokens, DB creds |
 
@@ -126,7 +126,7 @@ flowchart LR
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `SURREAL_URL` | `ws://surrealdb:8000` | Hub DB |
+| `Helix_URL` | `ws://HelixDB:8000` | Hub DB |
 | `OPENBAO_URL` | `http://openbao:8200` | Secret store |
 | `REDIS_URL` | `redis://redis:6379` | Cache |
 | `GLIA_AUTH_TIMEOUT` | `120` | seconds |
@@ -136,9 +136,9 @@ flowchart LR
 
 - **Logs:** `docker compose logs -f glia-hub`
 - **Restart:** `docker compose restart glia-hub`
-- **Wipe state:** `docker compose down -v` (also drops OpenBao, SurrealDB,
+- **Wipe state:** `docker compose down -v` (also drops OpenBao, HelixDB,
   Redis volumes — destructive).
 
-For production, replace `memory` SurrealDB with a persistent backend
+For production, replace `memory` HelixDB with a persistent backend
 (RocksDB or TiKV), front the Hub with TLS, and pin OpenBao to a real
 unsealed root.

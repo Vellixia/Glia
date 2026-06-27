@@ -1,7 +1,8 @@
 # Architecture
 
-Glia splits a single tool call — `glia_action` — across four trust tiers.
-Secrets never cross the trust boundary in plaintext.
+Glia is an **everything-remote** gateway. The Hub is the single source of
+truth and the only entity that makes decisions or touches secrets. The CLI
+is a thin HTTP/WS client — it holds no authoritative state.
 
 ## Trust tiers
 
@@ -11,39 +12,40 @@ flowchart TB
         MCP["MCP client<br/>calls glia_action(intent, params)<br/>sees no secrets"]
     end
 
-    subgraph Local["Local (semi-trusted)"]
-        CLI["glia CLI<br/>embedded SurrealKV<br/>candle embeddings<br/>local skills"]
+    subgraph Client["Client device (thin)"]
+        CLI["glia CLI / bridge<br/>per-device token only<br/>no local DB"]
     end
 
-    subgraph Hub["Hub (trusted)"]
-        GATE["WS /gateway<br/>glia_action engine"]
-        SDB[("SurrealDB<br/>server-mode")]
-        BAO["OpenBao<br/>response-wrapping"]
-        SAND["Sandbox<br/>seccomp / sandbox-exec"]
+    subgraph Hub["Hub (trusted, self-hosted)"]
+        GATE["WS /gateway<br/>classify → discover → dep-check → exec"]
+        SDB[("HelixDB<br/>graph + vector")]
+        BAO["OpenBao<br/>response-wrapping + KV"]
+        SAND["Sandbox<br/>npx / uvx / docker"]
         CACHE["Redis<br/>synthesis cache"]
+        EMB["candle/MiniLM<br/>local embeddings"]
     end
 
     subgraph Catalog["Catalog (community)"]
         CC["Vellixia/community-catalog<br/>GitHub markdown"]
     end
 
-    MCP <-->|"WS<br/>intent / result"| CLI
-    CLI -->|"local: SurrealKV"| SDB
-    CLI <-->|"WS /gateway"| GATE
+    MCP <-->|"WS (MCP JSON-RPC)"| CLI
+    CLI <-->|"HTTP + WS /gateway"| GATE
     GATE --> SDB
     GATE --> BAO
     GATE --> SAND
     GATE --> CACHE
+    GATE --> EMB
     SAND -->|"1-time wrapped token"| BAO
     CLI -->|"pull via glia use"| CC
-    CC -.->|"markdown only,<br/>never trusted"| SAND
+    CC -.->|"metadata only synced<br/>to Hub; JS runs in sandbox"| SAND
 ```
 
 The Hub exposes a **single** AI-facing tool:
 
 ```text
-tool: glia_action(intent:string, params:object)
-  → result | AUTH_REQUIRED | AUTH_TIMEOUT | RULE_VIOLATION | HUB_UNREACHABLE
+glia_action(intent: string, params: object)
+  → result | AUTH_REQUIRED | RUNTIME_MISSING | HUB_UNREACHABLE
 ```
 
 ## Components
@@ -51,9 +53,14 @@ tool: glia_action(intent:string, params:object)
 | Tier | Component | Role |
 |------|-----------|------|
 | Agent | MCP client | Calls `glia_action`. Sees no secrets. |
-| Local | `glia` CLI | Embedded SurrealKV, candle embeddings, local skills. |
-| Hub | `glia-hub` | SurrealDB server, OpenBao, Redis, sandbox dispatcher. |
-| Catalog | `community-catalog` (GitHub) | Pulled into private sandbox, never trusted. |
+| Client | `glia` CLI + `glia-bridge` | Thin client — one MCP entry, per-device token, no DB. |
+| Hub | `glia-hub` | All decisions: classify, discover, dep-check, exec, OAuth broker. |
+| Hub | HelixDB | Skill/tool/provider graph + vector index. Hub-only. |
+| Hub | OpenBao | Secrets at rest, response-wrapping, dynamic leases. Hub-only. |
+| Hub | Redis | Synthesis + token cache. Hub-only. |
+| Hub | candle/MiniLM | Local sentence embeddings (no external API). |
+| Hub | Sandbox (`glia-sandbox`) | Runs `npx`/`uvx`/`docker` tools with injected, auto-purged creds. |
+| Catalog | `community-catalog` (GitHub) | Pulled as markdown; metadata syncs to Hub; JS executes in sandbox only. |
 
 ## Data flow: a single action
 
@@ -66,24 +73,26 @@ sequenceDiagram
     participant S as Sandbox
 
     A->>C: glia_action(intent, params)
-    C->>C: match locally (SurrealKV + candle)
-    alt local match
-        C-->>A: result
-    else remote
-        C->>H: WS /gateway (intent)
-        H->>H: tool graph lookup
-        alt needs creds
-            H->>O: issue 1-time wrapped token
-            H-->>C: AUTH_REQUIRED
-            C->>O: /callback (localhost, ≤120s)
-            O-->>C: 15-min access token
-            C-->>H: resume with token
-        end
-        H->>S: dispatch tool (wrapped token)
-        S->>O: unwrap directly
-        S->>S: exec, inject env, purge
+    C->>H: WS /gateway (intent, device-token)
+    H->>H: classify → discover skills (HelixDB + MiniLM)
+    H->>H: dep-check (runtime pre-flight + auth graph)
+    alt runtime missing / too old
+        H-->>C: RUNTIME_MISSING { runtime, needed_version, hint }
+        C-->>A: RUNTIME_MISSING
+    else needs creds
+        H->>O: mint 1-time response-wrapping token
+        H-->>C: AUTH_REQUIRED { deps }
+        C->>C: browser OAuth flow (localhost callback)
+        C-->>H: resume (token now in OpenBao via Hub callback)
+        H->>S: dispatch tool (wrapping token only)
+        S->>O: unwrap directly (Hub never sees plaintext)
+        S->>S: exec, inject env, purge on exit
         S-->>H: result
-        H->>H: synthesize (≤150 tokens)
+        H-->>C: result
+    else local tool
+        H-->>C: RunLocal { command, allow_patterns, root }
+        C->>C: glia-bash exec on device
+        C-->>H: LocalResult
         H-->>C: result
     end
     C-->>A: result
@@ -91,34 +100,44 @@ sequenceDiagram
 
 ## Secret plane (V3, V18)
 
-Three rules govern secrets end to end:
+Three invariants govern secrets end to end:
 
-1. **The Hub API never reads plaintext secrets.** OpenBao dynamic leases for
-   DB/K8s, KV stores refresh tokens, Cubbyhole holds per-exec tokens.
-2. **The Sandbox unwraps directly against OpenBao.** The Hub never sees
-   plaintext — it only issues a response-wrapping token.
-3. **Glia exchanges refresh tokens for 15-min OAuth access tokens** before
-   handing them to the sandbox, so a stolen refresh token has a narrow
-   blast radius.
+1. **The Hub API never reads plaintext secrets.** OpenBao KV stores OAuth
+   refresh tokens; Cubbyhole holds per-exec access tokens; dynamic leases
+   for DB/cloud creds.
+2. **The Sandbox unwraps directly against OpenBao.** The Hub issues only a
+   response-wrapping token — it never sees the underlying secret in
+   plaintext.
+3. **Per-exec, short-lived, scoped.** The Hub mints one wrapping token per
+   execution; the sandbox unwraps it once, injects the secret as an env var,
+   and purges it on drop. A stolen token has a 5-minute blast radius.
 
 ## Storage
 
 | Store | Backend | Holds |
 |-------|---------|-------|
-| Local DB | SurrealKV (embedded) | Skills, tools, stacks, edges |
-| Hub DB | SurrealDB (server, in-memory for dev) | Same schema, Hub-authoritative |
+| Hub DB | HelixDB (server, `:6969`) | Skills, tools, stacks, providers, edges |
 | Cache | Redis | Synthesis responses (≤2 ms hot path) |
-| Secrets | OpenBao | Refresh + access tokens, DB creds |
+| Secrets | OpenBao (`:8200` in-container) | Refresh tokens, access tokens, dynamic leases |
 | Catalog | GitHub | Markdown skills, versioned |
+
+The CLI has **no local database**. It is a pure HTTP client against the Hub.
 
 ## Sandbox (V17)
 
-`glia-bash` enforces:
+For **local tools** (`glia-bash`):
 
-- **Allow-list** of binaries (`uvx`, `npx`, `cargo`, `git`, …) — anything else
-  routes back to the Hub sandbox.
-- **Path boundary** — every resolved path must be inside a workspace root;
+- **Allow-list** of binaries (`uvx`, `npx`, `cargo`, `git`, …) — others
+  route to the Hub sandbox.
+- **Path boundary** — every resolved path must be inside the workspace root;
   `..`, `~`, and absolute paths outside the root are rejected.
+
+For **remote tools** (`glia-sandbox` on the Hub):
+
+- Tool spawned as a child process with `npx`/`uvx`/`docker`.
+- Credentials injected as env vars from OpenBao wrapping token; purged on
+  drop.
+- No host filesystem or network access beyond the tool's declared scope.
 
 v1 is cross-platform. Kernel seccomp (Linux) and `sandbox-exec` (macOS) are
 deferred — see `SPEC.md` §B.
@@ -126,13 +145,20 @@ deferred — see `SPEC.md` §B.
 ## Synthesis (V19)
 
 ```text
-score = min(1.0, cosine(query, skill) * (1.0 + 0.1 * edges(skill)))
-output = top-k skills, ≤ 150 tokens
+score = min(1.0, cosine(query, skill) * (1.0 + 0.1 * stack_edges(skill)))
 ```
 
-Edges boost — a skill that is structurally connected to the matched intent
-outranks an isolated but cosinely-similar one. Synthesis is OpenAI-compatible
-(OpenAI, Anthropic, vLLM, Ollama).
+Graph-edge boost: a skill that is structurally connected to the matched
+stack outranks an isolated but cosinely-similar one. Synthesis is
+OpenAI-compatible (Anthropic, vLLM, Ollama).
+
+## Note on "air-gap"
+
+Glia's core embeds no external APIs: embeddings run via `candle`/MiniLM
+locally on the Hub; the LLM synthesis backend is configurable (any
+OpenAI-compatible endpoint). The system makes no external calls beyond what
+you configure. However, the CLI always requires a reachable Hub — air-gap
+means "no cloud dependencies for the platform itself," not "offline CLI."
 
 ## Crate graph
 
@@ -144,27 +170,30 @@ flowchart LR
     CLI --> BR[glia-bridge]
     CLI --> AUT[glia-author]
     CLI --> CAT[glia-catalog]
-    ACT --> DB[glia-db]
+    CLI --> REV[glia-review]
+    CLI --> CTX[glia-context]
+    CLI --> SBX[glia-sandbox]
+    ACT --> HLX[glia-helix]
     ACT --> EMB[glia-embed]
-    ACT --> SYT[glia-synth]
-    CAT --> DB
+    ACT --> SBX
+    CAT --> HLX
     CAT --> EMB
-    AUT --> DB
+    AUT --> HLX
     AUT --> EMB
     INIT --> CTX[glia-context]
     INIT --> AUTH[glia-auth]
     INIT --> HK[glia-hooks]
-    SYT --> CHK[glia-chunk]
-    HUB[glia-hub] --> SDB[glia-sandbox]
+    HUB[glia-hub] --> SBX
     HUB --> HK
-    HUB --> DB
+    HUB --> HLX
     HUB --> CA[glia-cache]
     HUB --> EMB
-    HUB --> SYT
+    HUB --> SYT[glia-synth]
     HUB --> BAO[glia-bao]
     BAO --> OP[(openbao)]
-    CTX --> DB
-    SYN --> DB
+    CTX --> HLX
+    SYN --> HLX
+    SYT --> CHK[glia-chunk]
 ```
 
-20 crates, no `unsafe` (workspace lint: `unsafe_code = "forbid"`).
+22 crates, no `unsafe` (workspace lint: `unsafe_code = "forbid"`).
