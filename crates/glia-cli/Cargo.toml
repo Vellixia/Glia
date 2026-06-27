@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 glia-bridge = { path = "../glia-bridge" }
+glia-proto = { path = "../glia-proto" }
 glia-helix = { path = "../glia-helix" }
 glia-sync = { path = "../glia-sync" }
 glia-hooks = { path = "../glia-hooks" }
@@ -35,6 +36,7 @@ anyhow = "1"
 reqwest = { version = "0.12", features = ["json"] }
 serde_json = "1"
 zeroize = "1"
+similar = { version = "2", features = ["text"] }
 
 [dev-dependencies]
 assert_cmd = "2"

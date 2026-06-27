@@ -341,6 +341,7 @@ pub async fn register(
         source: format!("local::{}.md", doc.frontmatter.name),
         embedding: vector,
         updated_at: now,
+        usage_count: 0,
     };
     db.upsert_skill(&id, record).await?;
     for stack in &doc.frontmatter.stacks {

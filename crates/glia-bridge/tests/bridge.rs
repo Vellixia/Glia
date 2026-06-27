@@ -43,7 +43,7 @@ async fn proxy_roundtrip() {
     let (mut stdin_tx, stdin_rx): (DuplexStream, DuplexStream) = tokio::io::duplex(4096);
     let (stdout_tx, mut stdout_rx): (DuplexStream, DuplexStream) = tokio::io::duplex(4096);
 
-    let cfg = BridgeConfig { url };
+    let cfg = BridgeConfig { url, bearer: None };
     let bridge = tokio::spawn(run_bridge_with_io(cfg, stdin_rx, stdout_tx));
 
     let lines = ["hello glia", "second line", "third"];

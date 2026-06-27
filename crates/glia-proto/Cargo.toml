@@ -1,0 +1,14 @@
+[package]
+name = "glia-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared wire-frame types for glia CLI/bridge ↔ Hub protocol (NDJSON over WS)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

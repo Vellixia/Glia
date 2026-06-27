@@ -1260,6 +1260,8 @@ name = "glia-bridge"
 version = "0.2.0"
 dependencies = [
  "futures-util",
+ "glia-proto",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.26.2",
@@ -1331,6 +1333,7 @@ dependencies = [
  "glia-helix",
  "glia-hooks",
  "glia-init",
+ "glia-proto",
  "glia-review",
  "glia-sandbox",
  "glia-sync",
@@ -1338,6 +1341,7 @@ dependencies = [
  "predicates",
  "reqwest 0.12.28",
  "serde_json",
+ "similar",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -1458,6 +1462,8 @@ dependencies = [
  "glia-bao",
  "glia-embed",
  "glia-helix",
+ "glia-proto",
+ "glia-sandbox",
  "hyper",
  "reqwest 0.12.28",
  "serde",
@@ -1484,6 +1490,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "glia-proto"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3359,6 +3373,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "slab"

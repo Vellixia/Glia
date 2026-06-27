@@ -200,6 +200,7 @@ impl Pipeline {
                 source: id.clone(),
                 embedding,
                 updated_at: Utc::now().to_rfc3339(),
+                usage_count: 0,
             };
             self.client.upsert_skill(&id, skill).await?;
             ids.push(id);
