@@ -76,6 +76,43 @@ services:
       RUST_LOG: info
     restart: unless-stopped
 
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Bake the public-facing Hub URL into the JS bundle.
+        # In production, set this to the externally-reachable URL of
+        # the glia-hub service (e.g. https://hub.glia.example.com).
+        # For local dev via compose, the web server proxies /api/graphql
+        # to glia-hub internally, so the public URL is the web dashboard
+        # itself. NEXT_PUBLIC_HUB_URL is also used by graphql-client.ts
+        # for direct browser→hub calls; see apps/web/src/lib/graphql-client.ts.
+        NEXT_PUBLIC_HUB_URL: "${NEXT_PUBLIC_HUB_URL:-http://localhost:3001}"
+    depends_on:
+      glia-hub:
+        condition: service_started
+    ports:
+      # Web dashboard on host port 3001 (hub is on 3000).
+      - "3001:3000"
+    environment:
+      # Server-side env: used by rewrites() to proxy /api/graphql →
+      # http://glia-hub:3000/graphql inside the compose network.
+      HUB_URL: "http://glia-hub:3000"
+
+      # Public env: passed through for runtime reference (Next.js
+      # replaces NEXT_PUBLIC_* at build time, but the build arg above
+      # handles that; setting it here makes it available for any
+      # process-level reads that happen server-side).
+      NEXT_PUBLIC_HUB_URL: "${NEXT_PUBLIC_HUB_URL:-http://localhost:3001}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
 volumes:
   openbao_data:
   redis_data:

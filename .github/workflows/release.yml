@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  # Manual trigger for re-running a release without pushing a new tag
+  # (e.g. recover from a transient network failure during the original run).
+  workflow_dispatch:
+
+# Cancel previous release for the same tag if a new tag arrives before
+# the previous one finishes. Group includes the tag name so two releases
+# for different tags can run in parallel.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -84,6 +94,9 @@ jobs:
     name: github-release
     needs: build
     runs-on: ubuntu-latest
+    # Skip the GitHub Release creation on manual re-runs unless there are
+    # actual artifacts to attach (i.e. the build job passed).
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - name: Download all artifacts

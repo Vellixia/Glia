@@ -1,0 +1,106 @@
+# Glia Web Dashboard — Next.js 16 standalone output.
+# Multi-stage build: deps → builder → runner.
+# Uses Yarn 4 (Corepack) for workspace dependency management.
+# Build context is the project root (monorepo).
+#
+# Usage: docker compose up web --build
+
+ARG NODE_VERSION=22-alpine
+
+# ────────────────────────────────────────────────────────────
+# Stage 1: Dependencies
+# ────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION} AS deps
+WORKDIR /app
+
+# Enable Corepack (bundled with Node 16.10+) → Yarn 4.
+RUN corepack enable
+
+# Copy manifest files first for Docker layer caching.
+# The root package.json declares workspaces (`apps/*`); the web
+# package.json is the workspace member we're building.
+COPY package.json yarn.lock .yarnrc.yml ./
+COPY apps/web/package.json apps/web/package.json
+
+# Install all workspace dependencies (frozen lockfile).
+# BuildKit cache mount preserves the Yarn global cache across
+# repeat builds, avoiding re-downloads.
+RUN --mount=type=cache,target=/root/.yarn/berry/cache \
+    yarn install --immutable
+
+# ────────────────────────────────────────────────────────────
+# Stage 2: Builder
+# ────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION} AS builder
+WORKDIR /app
+
+RUN corepack enable
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build-time public env vars (baked into JS bundle at build time).
+# Provide via docker --build-arg or docker-compose build.args.
+ARG NEXT_PUBLIC_HUB_URL
+ENV NEXT_PUBLIC_HUB_URL=${NEXT_PUBLIC_HUB_URL:-}
+
+# Copy cached node_modules from deps stage.
+# Yarn 4 w/ nodeLinker: node-modules hoists deps to root.
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy workspace package.json + source.
+COPY package.json yarn.lock .yarnrc.yml ./
+COPY apps/web/ apps/web/
+
+# Build Next.js standalone output for the web workspace.
+# If you hit Turbopack standalone tracing issues in 16.1+, use:
+#   yarn workspace @glia/web run next build --webpack
+RUN yarn workspace @glia/web build
+
+# ────────────────────────────────────────────────────────────
+# Stage 3: Runner
+# ────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION} AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Create a non-root user for security.
+RUN addgroup --system --gid 1001 webgroup && \
+    adduser --system --uid 1001 webuser
+
+# ── Copy standalone output ─────────────────────────────────
+# .next/standalone contains the traced server.js + minimal
+# node_modules (no host-level Yarn artifacts).  It does NOT
+# include .next/static or public/ — those are copied separately.
+COPY --from=builder --chown=webuser:webgroup \
+    /app/apps/web/.next/standalone ./
+
+# Static assets (hashed, cached forever by CDN / browser).
+COPY --from=builder --chown=webuser:webgroup \
+    /app/apps/web/.next/static ./.next/static
+
+# Public directory (robots.txt, favicon, etc.).
+COPY --from=builder --chown=webuser:webgroup \
+    /app/apps/web/public ./public
+
+# Ensure .next directory is writable for prerender cache and
+# image optimization at runtime.
+RUN mkdir -p .next && chown -R webuser:webgroup .next
+
+# Drop privileges.
+USER webuser
+
+EXPOSE 3000
+
+# Healthcheck: relies on a generic 200 from the root route.
+# For a stricter check, create app/api/health/route.ts and
+# change the path to /api/health.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Start the Next.js standalone server.
+CMD ["node", "server.js"]

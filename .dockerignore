@@ -1,5 +1,34 @@
+# ── Rust / Hub ──
 target/
-.git/
 .glia/
+
+# ── Node / Web ──
+node_modules/
+apps/web/node_modules/
+apps/web/.next/
+.next/
+out/
+build/
+
+# ── Git ──
+.git/
+
+# ── Temp / Logs ──
 *.log
 *.tmp
+*.tsbuildinfo
+
+# ── Env (never ship secrets) ──
+.env
+.env.*
+!.env.example
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ──
+.DS_Store
+Thumbs.db

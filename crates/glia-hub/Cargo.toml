@@ -28,9 +28,12 @@ glia-action = { path = "../glia-action" }
 glia-bao = { path = "../glia-bao" }
 glia-helix = { path = "../glia-helix" }
 glia-embed = { path = "../glia-embed" }
+glia-catalog = { path = "../glia-catalog" }
 glia-sandbox = { path = "../glia-sandbox" }
 glia-proto = { path = "../glia-proto" }
 reqwest = { version = "0.12", features = ["json"] }
+dotenvy = "0.15"
+glia-hub-api = { path = "../glia-hub-api" }
 
 [dev-dependencies]
 tokio-tungstenite = { version = "0.26", features = ["connect"] }

@@ -108,6 +108,9 @@ pub trait OpenBao: Send + Sync {
     /// KV v2: write a secret at `path`.
     async fn kv_put(&self, path: &str, secret: &Secret) -> Result<(), BaoError>;
 
+    /// KV v2: delete a secret at the given path.
+    async fn kv_delete(&self, path: &str) -> Result<(), BaoError>;
+
     /// Cubbyhole: store a per-exec secret (single-use token).
     async fn cubbyhole_put(&self, key: &str, secret: &Secret) -> Result<(), BaoError>;
 
@@ -200,6 +203,15 @@ impl OpenBao for StubOpenBao {
 
     async fn kv_put(&self, path: &str, secret: &Secret) -> Result<(), BaoError> {
         self.kv.lock().await.insert(path.into(), secret.clone());
+        Ok(())
+    }
+
+    async fn kv_delete(&self, path: &str) -> Result<(), BaoError> {
+        self.kv
+            .lock()
+            .await
+            .remove(path)
+            .ok_or_else(|| BaoError::NotFound(format!("kv: {path}")))?;
         Ok(())
     }
 
@@ -387,6 +399,12 @@ impl OpenBao for HttpOpenBao {
         let body = serde_json::json!({ "data": secret.data });
         self.post_json(&format!("/v1/{}/data", path.trim_start_matches('/')), &body)
             .await?;
+        Ok(())
+    }
+
+    async fn kv_delete(&self, path: &str) -> Result<(), BaoError> {
+        let p = format!("/v1/{}/delete", path.trim_start_matches('/'));
+        self.post_json(&p, &serde_json::json!({})).await?;
         Ok(())
     }
 
