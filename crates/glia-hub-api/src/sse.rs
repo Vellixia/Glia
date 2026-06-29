@@ -1,6 +1,6 @@
 use axum::{
-    response::sse::{Event, KeepAlive, Sse},
     Extension,
+    response::sse::{Event, KeepAlive, Sse},
 };
 use futures_util::Stream;
 use std::convert::Infallible;
@@ -10,11 +10,10 @@ use tokio::sync::broadcast;
 use crate::schema::LogEntry;
 
 /// Broadcast channel for log entries — shared across all SSE subscribers.
-static LOG_CHANNEL: LazyLock<broadcast::Sender<LogEntry>> =
-    LazyLock::new(|| {
-        let (tx, _) = broadcast::channel::<LogEntry>(256);
-        tx
-    });
+static LOG_CHANNEL: LazyLock<broadcast::Sender<LogEntry>> = LazyLock::new(|| {
+    let (tx, _) = broadcast::channel::<LogEntry>(256);
+    tx
+});
 
 /// Subscribe to the log broadcast channel.
 pub fn subscribe_log_stream() -> broadcast::Receiver<LogEntry> {

@@ -32,11 +32,11 @@ async fn main() -> anyhow::Result<()> {
     };
     tracing::info!(%bind, auth = hub_token.is_some(), "glia-hub starting");
 
-    let catalog_source: std::sync::Arc<dyn glia_catalog::CatalogSource> =
-        std::sync::Arc::new(glia_catalog::GitHubCatalog::new(
-            std::env::var("GLIA_CATALOG_URL")
-                .unwrap_or_else(|_| "https://raw.githubusercontent.com/Vellixia/community-catalog/main".into()),
-        ));
+    let catalog_source: std::sync::Arc<dyn glia_catalog::CatalogSource> = std::sync::Arc::new(
+        glia_catalog::GitHubCatalog::new(std::env::var("GLIA_CATALOG_URL").unwrap_or_else(|_| {
+            "https://raw.githubusercontent.com/Vellixia/community-catalog/main".into()
+        })),
+    );
 
     // Mount GraphQL + SSE routes alongside the existing Hub REST/WS routes.
     let bao_for_api: std::sync::Arc<dyn glia_bao::OpenBao> = bao

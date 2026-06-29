@@ -19,9 +19,9 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
-use jsonwebtoken::{decode, DecodingKey, Validation};
-use tower_http::cors::{CorsLayer, Any};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 /// Build the Axum router with all GraphQL + SSE routes.
 ///
@@ -36,7 +36,10 @@ pub fn routes(
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers([axum::http::header::AUTHORIZATION, axum::http::header::CONTENT_TYPE]);
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+        ]);
 
     Router::new()
         .route("/graphql", get(graphql_playground).post(graphql_handler))
@@ -65,6 +68,9 @@ async fn graphql_handler(
 ) -> async_graphql_axum::GraphQLResponse {
     let mut request = req.into_inner();
 
+    // Nested if chain — flattening obscures the dependency between Option
+    // destructures and the `Bearer ` prefix check.
+    #[allow(clippy::collapsible_if)]
     if let Some(auth_header) = headers.get("authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {

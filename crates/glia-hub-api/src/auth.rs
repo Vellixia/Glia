@@ -1,10 +1,10 @@
+use argon2::PasswordVerifier;
 use axum::{
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    http::{StatusCode, request::Parts},
     response::IntoResponse,
 };
-use argon2::PasswordVerifier;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 
 use crate::schema::LoginPayload;
 
@@ -108,6 +108,9 @@ fn bearer_token(parts: &Parts) -> Option<&str> {
 fn query_token(parts: &Parts) -> Option<String> {
     let query = parts.uri.query()?;
     for pair in query.split('&') {
+        // The nested if is fine here — flattening with `&&` mixes the
+        // `Option` destructure with a scalar comparison.
+        #[allow(clippy::collapsible_if)]
         if let Some((k, v)) = pair.split_once('=') {
             if k == "token" {
                 return Some(url_decode(v));
@@ -122,6 +125,9 @@ fn url_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
+        // Same reason: the percent-decode branch has an inner Option
+        // destructure that combines poorly with the outer guard.
+        #[allow(clippy::collapsible_if)]
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let (Some(h), Some(l)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
                 out.push(((h << 4) | l) as char);
@@ -170,10 +176,7 @@ pub fn create_token(secret: &str) -> anyhow::Result<LoginPayload> {
     let expires_at = chrono::DateTime::from_timestamp(expires as i64, 0)
         .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
 
-    Ok(LoginPayload {
-        token,
-        expires_at,
-    })
+    Ok(LoginPayload { token, expires_at })
 }
 
 /// Verify the admin password against the stored hash and return a JWT.

@@ -1,6 +1,4 @@
-use axum::{
-    response::sse::{Event, KeepAlive, Sse},
-};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
 use serde::Serialize;
 use std::convert::Infallible;
@@ -14,11 +12,10 @@ use crate::auth::AuthUserSse;
 /// Capacity 128 — dashboard events are sparse (mutations, not log streams);
 /// if a subscriber falls behind, it gets a `lag-detected` event and the
 /// connection stays alive.
-static DASHBOARD_CHANNEL: LazyLock<broadcast::Sender<DashboardEvent>> =
-    LazyLock::new(|| {
-        let (tx, _) = broadcast::channel::<DashboardEvent>(128);
-        tx
-    });
+static DASHBOARD_CHANNEL: LazyLock<broadcast::Sender<DashboardEvent>> = LazyLock::new(|| {
+    let (tx, _) = broadcast::channel::<DashboardEvent>(128);
+    tx
+});
 
 /// Subscribe to the dashboard event broadcast channel.
 pub fn subscribe_dashboard_events() -> broadcast::Receiver<DashboardEvent> {
@@ -191,28 +188,60 @@ mod tests {
     fn event_names_match_kebab_case() {
         let cases: Vec<(DashboardEvent, &str)> = vec![
             (
-                DashboardEvent::SkillInstalled { id: "1".into(), name: "n".into() },
+                DashboardEvent::SkillInstalled {
+                    id: "1".into(),
+                    name: "n".into(),
+                },
                 "skill-installed",
             ),
-            (DashboardEvent::SkillUninstalled { id: "1".into() }, "skill-uninstalled"),
             (
-                DashboardEvent::SkillToggled { id: "1".into(), enabled: false },
+                DashboardEvent::SkillUninstalled { id: "1".into() },
+                "skill-uninstalled",
+            ),
+            (
+                DashboardEvent::SkillToggled {
+                    id: "1".into(),
+                    enabled: false,
+                },
                 "skill-toggled",
             ),
-            (DashboardEvent::SkillSyncSucceeded { count: 1 }, "skill-sync-succeeded"),
             (
-                DashboardEvent::SkillSyncFailed { count: 1, error: "e".into() },
+                DashboardEvent::SkillSyncSucceeded { count: 1 },
+                "skill-sync-succeeded",
+            ),
+            (
+                DashboardEvent::SkillSyncFailed {
+                    count: 1,
+                    error: "e".into(),
+                },
                 "skill-sync-failed",
             ),
             (DashboardEvent::ConfigChanged, "config-changed"),
-            (DashboardEvent::ProviderRegistered { id: "1".into() }, "provider-registered"),
-            (DashboardEvent::SecretDeleted { cred_id: "1".into() }, "secret-deleted"),
             (
-                DashboardEvent::SecretAdded { cred_id: "1".into(), provider: None },
+                DashboardEvent::ProviderRegistered { id: "1".into() },
+                "provider-registered",
+            ),
+            (
+                DashboardEvent::SecretDeleted {
+                    cred_id: "1".into(),
+                },
+                "secret-deleted",
+            ),
+            (
+                DashboardEvent::SecretAdded {
+                    cred_id: "1".into(),
+                    provider: None,
+                },
                 "secret-added",
             ),
-            (DashboardEvent::CatalogSourceAdded { name: "n".into() }, "catalog-source-added"),
-            (DashboardEvent::CatalogSourceRemoved { name: "n".into() }, "catalog-source-removed"),
+            (
+                DashboardEvent::CatalogSourceAdded { name: "n".into() },
+                "catalog-source-added",
+            ),
+            (
+                DashboardEvent::CatalogSourceRemoved { name: "n".into() },
+                "catalog-source-removed",
+            ),
         ];
         for (event, expected) in cases {
             assert_eq!(event.event_name(), expected);
@@ -221,7 +250,10 @@ mod tests {
 
     #[test]
     fn event_json_shape() {
-        let event = DashboardEvent::SkillToggled { id: "x".into(), enabled: true };
+        let event = DashboardEvent::SkillToggled {
+            id: "x".into(),
+            enabled: true,
+        };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["type"], "skill-toggled");
         assert_eq!(json["id"], "x");

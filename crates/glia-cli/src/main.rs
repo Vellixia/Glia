@@ -418,8 +418,8 @@ async fn main() -> anyhow::Result<()> {
         } => run_review(op, repo_root, hub, token).await,
         Cmd::Enroll { hub, admin_token } => run_enroll(hub, admin_token).await,
         Cmd::HashPassword { password } => {
-            use argon2::password_hash::{rand_core::OsRng, SaltString};
             use argon2::PasswordHasher;
+            use argon2::password_hash::{SaltString, rand_core::OsRng};
             let salt = SaltString::generate(&mut OsRng);
             let hash = argon2::Argon2::default()
                 .hash_password(password.as_bytes(), &salt)
