@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "glia-test-cli-flow"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1841,14 +1841,14 @@ dependencies = [
 
 [[package]]
 name = "glia-test-hashgen"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "argon2",
 ]
 
 [[package]]
 name = "glia-test-hub-flow"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",

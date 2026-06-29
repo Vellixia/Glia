@@ -1,0 +1,27 @@
+{
+  "name": "@glia/web-test-agent-browser",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Live UI flow tests for the Glia web dashboard (agent-browser)",
+  "type": "module",
+  "scripts": {
+    "test:live:setup": "tsx setup.ts",
+    "test:live": "tsx flows/01-login.ts && tsx flows/02-overview-kpis.ts && tsx flows/03-skills-toggle.ts && tsx flows/04-catalog-search.ts && tsx flows/05-secrets-add-provider.ts && tsx flows/06-settings-update.ts && tsx flows/07-sse-realtime.ts && tsx flows/08-logout-flow.ts && tsx flows/09-401-recovery.ts",
+    "test:live:01": "tsx flows/01-login.ts",
+    "test:live:02": "tsx flows/02-overview-kpis.ts",
+    "test:live:03": "tsx flows/03-skills-toggle.ts",
+    "test:live:04": "tsx flows/04-catalog-search.ts",
+    "test:live:05": "tsx flows/05-secrets-add-provider.ts",
+    "test:live:06": "tsx flows/06-settings-update.ts",
+    "test:live:07": "tsx flows/07-sse-realtime.ts",
+    "test:live:08": "tsx flows/08-logout-flow.ts",
+    "test:live:09": "tsx flows/09-401-recovery.ts",
+    "test:live:stop": "tsx teardown.ts",
+    "test:live:debug": "tsx flows/01-login.ts --keep-open",
+    "test:live:typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3"
+  }
+}
