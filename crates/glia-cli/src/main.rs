@@ -220,6 +220,14 @@ pub enum Cmd {
     /// are available on PATH and which are missing. Exit 0 if all present,
     /// exit 1 if any missing (so CI can gate on it).
     Doctor,
+    /// Hash a password with Argon2id and print the hash.
+    ///
+    /// Useful for generating `GLIA_ADMIN_HASH` for the Hub's `.env` file.
+    /// Example: `glia hash-password my-secret-password`
+    HashPassword {
+        /// Password to hash.
+        password: String,
+    },
 }
 
 /// `glia chunk` subcommands.
@@ -409,6 +417,17 @@ async fn main() -> anyhow::Result<()> {
             token,
         } => run_review(op, repo_root, hub, token).await,
         Cmd::Enroll { hub, admin_token } => run_enroll(hub, admin_token).await,
+        Cmd::HashPassword { password } => {
+            use argon2::password_hash::{rand_core::OsRng, SaltString};
+            use argon2::PasswordHasher;
+            let salt = SaltString::generate(&mut OsRng);
+            let hash = argon2::Argon2::default()
+                .hash_password(password.as_bytes(), &salt)
+                .map_err(|e| anyhow::anyhow!("argon2: {e}"))?
+                .to_string();
+            println!("{hash}");
+            Ok(())
+        }
         Cmd::Context {
             stacks,
             file,

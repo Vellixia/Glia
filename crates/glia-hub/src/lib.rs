@@ -7,6 +7,9 @@
 //! when a token is configured; `/healthz` and `/oauth/callback` are always
 //! unauthenticated (callback is hit by the provider redirect, not the CLI).
 
+/// Centralized config loaded from `.env` — see [`config::AppConfig`].
+pub mod config;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -842,16 +845,22 @@ async fn exec_with_ready_creds(
 ///
 /// `bao` is the OpenBao backend for OAuth token storage. Pass `None` to use
 /// the in-memory `StubOpenBao` (suitable for local dev without OpenBao running).
+/// `extra_routes` is merged into the Hub router (e.g., GraphQL, SSE).
 pub async fn serve(
     addr: SocketAddr,
     hub_token: Option<String>,
     bao: Option<Arc<dyn glia_bao::OpenBao>>,
+    extra_routes: Option<Router>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut app = hub_router(hub_token, bao);
+    if let Some(extra) = extra_routes {
+        app = app.merge(extra);
+    }
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "glia-hub listening");
     axum::serve(
         listener,
-        hub_router(hub_token, bao).into_make_service_with_connect_info::<SocketAddr>(),
+        app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await?;
     Ok(())

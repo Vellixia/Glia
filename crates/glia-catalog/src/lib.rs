@@ -230,6 +230,15 @@ pub async fn list_tools(source: &dyn CatalogSource) -> Result<Vec<CatalogEntry>,
     Ok(index.tools)
 }
 
+/// Remove a previously installed tool from the database.
+pub async fn remove_tool(
+    name: &str,
+) -> Result<(), CatalogError> {
+    // Stub — actual HelixDB deletion will come when db is injected
+    let _ = name;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

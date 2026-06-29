@@ -45,11 +45,19 @@ glia CLI / bridge  ← thin client, no local state
 ┌─────────────── Glia Hub (self-hosted) ────────────────┐
 │  classify → discover skills → dep-check → execute      │
 │  OAuth broker · per-exec cred mint · sandbox           │
+│  GraphQL + SSE (events) for web dashboard              │
 └──────┬────────────┬──────────────┬────────────┬───────┘
        ▼            ▼              ▼            ▼
   HelixDB        OpenBao        Redis       embeddings
 (graph+vector)  (secrets)      (cache)   (candle/MiniLM)
 ```
+
+The **web dashboard** (`apps/web`, Next.js 16 + React 19 + Auth.js v5)
+ships in `v0.4.0`. It connects to the Hub via `Authorization: Bearer`
+JWT (server-side proxy), reflects real-time Hub state via SSE
+(`/api/events`), and provides an Admin UI for skills, catalog, agents,
+secrets, sync, logs, settings, and a connection-state indicator in
+the sidebar.
 
 The Hub exposes a **single** tool to agents:
 
@@ -120,6 +128,38 @@ glia action --intent "hello"
 
 `NotApplicable` means no matching skill yet — add skills via
 `glia save-skill` or `glia use <name>`.
+
+## Web Dashboard (v0.4.0)
+
+`apps/web` ships with the repo. Start it alongside the Hub:
+
+```bash
+yarn install
+yarn dev:hub       # Rust Hub on :3000
+yarn dev:web       # Next.js dashboard on :3000
+# Or both at once:
+yarn dev:all
+```
+
+Sign in with the admin password (configured via `GLIA_ADMIN_HASH` in the
+Hub's environment). The dashboard connects to the Hub via a same-origin
+`/api/graphql` proxy (JWT never reaches the browser) and subscribes to
+`/api/events` for real-time updates — no manual refresh needed when a
+skill is installed, toggled, synced, or a secret is added.
+
+A connection-state indicator in the sidebar footer shows whether the
+live event stream is `Live`, `Reconnecting`, or `Disconnected`.
+
+## Status
+
+| Release | What ships |
+|---------|------------|
+| v0.4.0  | Real-time web dashboard (Auth.js + GraphQL proxy + SSE events + Docker) |
+| v0.3.0  | Rust Hub, OAuth broker, OpenBao, glia-bao trait |
+| v0.2.0  | glia-cli, glia-bridge, glia-hub, glia-hub-api, glia-sandbox, glia-helix |
+| v0.1.0  | Workspace scaffold, glia-action core |
+
+Roadmap and per-release plans live in [`docs/plan/`](docs/plan/).
 
 ## Docs
 
