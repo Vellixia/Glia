@@ -1,0 +1,17 @@
+[package]
+name = "glia-test-hashgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "One-shot Argon2id hash generator for glia-test/.env (NOT a lib)"
+
+[[bin]]
+name = "glia-test-hashgen"
+path = "src/main.rs"
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std"] }
+
+[lints]
+workspace = true
