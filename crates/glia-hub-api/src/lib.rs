@@ -12,6 +12,8 @@ pub mod events;
 pub mod schema;
 /// SSE broadcast of log entries.
 pub mod sse;
+/// In-memory test backing store for GraphQL resolvers.
+pub mod store;
 
 use axum::{
     Extension, Router,
@@ -23,15 +25,31 @@ use jsonwebtoken::{DecodingKey, Validation, decode};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::store::StoreHandle;
+
 /// Build the Axum router with all GraphQL + SSE routes.
 ///
 /// `jwt_secret` is shared across handlers via [`Extension`].
+/// `store` is the in-memory backing state for GraphQL resolvers —
+/// resolved via `ctx.data::<StoreHandle>()`.
 pub fn routes(
     jwt_secret: Arc<String>,
     bao: std::sync::Arc<dyn glia_bao::OpenBao>,
     catalog_source: std::sync::Arc<dyn glia_catalog::CatalogSource>,
 ) -> Router {
-    let schema = schema::build_schema(&jwt_secret, bao, catalog_source);
+    let store = StoreHandle::new();
+    routes_with_store(jwt_secret, bao, catalog_source, store)
+}
+
+/// Same as [`routes`] but lets the caller share an existing store handle
+/// (useful for tests that want a pre-seeded backing state).
+pub fn routes_with_store(
+    jwt_secret: Arc<String>,
+    bao: std::sync::Arc<dyn glia_bao::OpenBao>,
+    catalog_source: std::sync::Arc<dyn glia_catalog::CatalogSource>,
+    store: StoreHandle,
+) -> Router {
+    let schema = schema::build_schema(&jwt_secret, bao, catalog_source, store);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

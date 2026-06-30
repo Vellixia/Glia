@@ -1619,6 +1619,7 @@ dependencies = [
  "glia-helix",
  "glia-hooks",
  "glia-hub",
+ "glia-proto",
  "glia-sandbox",
  "reqwest 0.12.28",
  "serde",
