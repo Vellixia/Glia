@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Note: we don't set `output: "standalone"` because Next.js 16's
+  // standalone output omits the `next` CLI binary, which our Docker
+  // runner needs. We run `next start` against the full build output
+  // instead (see Dockerfile.web).
 
   /** Proxy /api/graphql → glia-hub inside the Docker compose network.
    *

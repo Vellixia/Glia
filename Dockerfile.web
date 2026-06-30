@@ -1,7 +1,11 @@
-# Glia Web Dashboard — Next.js 16 standalone output.
+# Glia Web Dashboard — Next.js 16.
 # Multi-stage build: deps → builder → runner.
 # Uses Yarn 4 (Corepack) for workspace dependency management.
 # Build context is the project root (monorepo).
+#
+# Note: Next.js 16 + Turbopack `output: 'standalone'` no longer produces a
+# usable standalone bundle (no .bin, no CLI), so we ship a thin runner
+# that runs `next start` against the full build output.
 #
 # Usage: docker compose up web --build
 
@@ -52,7 +56,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY apps/web/ apps/web/
 
-# Build Next.js standalone output for the web workspace.
+# Build Next.js production output for the web workspace.
 # If you hit Turbopack standalone tracing issues in 16.1+, use:
 #   yarn workspace @glia/web run next build --webpack
 RUN yarn workspace @glia/web build
@@ -68,24 +72,18 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Install wget for the healthcheck.
+RUN apk add --no-cache wget
+
 # Create a non-root user for security.
 RUN addgroup --system --gid 1001 webgroup && \
     adduser --system --uid 1001 webuser
 
-# ── Copy standalone output ─────────────────────────────────
-# .next/standalone contains the traced server.js + minimal
-# node_modules (no host-level Yarn artifacts).  It does NOT
-# include .next/static or public/ — those are copied separately.
-COPY --from=builder --chown=webuser:webgroup \
-    /app/apps/web/.next/standalone ./
-
-# Static assets (hashed, cached forever by CDN / browser).
-COPY --from=builder --chown=webuser:webgroup \
-    /app/apps/web/.next/static ./.next/static
-
-# Public directory (robots.txt, favicon, etc.).
-COPY --from=builder --chown=webuser:webgroup \
-    /app/apps/web/public ./public
+# Copy the full workspace (with .next and node_modules) so the
+# runner can execute `next start` directly. This is larger than
+# the standalone output but works reliably across Next.js 16's
+# output quirks.
+COPY --from=builder --chown=webuser:webgroup /app /app
 
 # Ensure .next directory is writable for prerender cache and
 # image optimization at runtime.
@@ -102,5 +100,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
 
-# Start the Next.js standalone server.
-CMD ["node", "server.js"]
+# Start the Next.js production server from the full build output.
+CMD ["node", "node_modules/next/dist/bin/next", "start", "apps/web"]
