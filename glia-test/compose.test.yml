@@ -15,12 +15,17 @@ services:
       RUST_LOG: "glia_hub=info,glia_sandbox=info,info"
     # Bind only on loopback — tests never target a remote host.
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
 
   web:
     environment:
       HUB_URL: "http://glia-hub:3000"
       NEXT_PUBLIC_HUB_URL: "http://localhost:3000"
+      # Auth.js v5 requires AUTH_SECRET (NextAuth secret) for signing the
+      # session JWT. We derive it from GLIA_JWT_SECRET so the test stack
+      # has a single source of truth for auth material.
+      AUTH_SECRET: "${GLIA_JWT_SECRET:?required for tests}"
     ports:
-      # Web dashboard on host port 3001 (Hub is on 3000).
-      - "127.0.0.1:3001:3000"
+      # Web dashboard on host port 3005 (Hub is on 3000; ports 3001/3002/3003
+      # are in use by other local stacks on this dev box).
+      - "3005:3000"

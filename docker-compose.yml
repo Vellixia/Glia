@@ -92,9 +92,10 @@ services:
     depends_on:
       glia-hub:
         condition: service_started
-    ports:
-      # Web dashboard on host port 3001 (hub is on 3000).
-      - "3001:3000"
+    # Port mapping is set in glia-test/compose.test.yml (overlay). The
+    # web service is only exposed to the host for live UI tests; in
+    # production it sits behind a reverse proxy. Keeping the base
+    # port-less avoids conflicts with other local stacks.
     environment:
       # Server-side env: used by rewrites() to proxy /api/graphql →
       # http://glia-hub:3000/graphql inside the compose network.
