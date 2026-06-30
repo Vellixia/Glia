@@ -33,14 +33,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navigation = [
-  { title: "Overview", url: "/overview", icon: LayoutDashboard },
-  { title: "Skills", url: "/skills", icon: Wrench },
-  { title: "Catalog", url: "/catalog", icon: Store },
-  { title: "Agents", url: "/agents", icon: Bot },
-  { title: "Secrets", url: "/secrets", icon: Key },
-  { title: "Sync", url: "/sync", icon: RefreshCw },
-  { title: "Logs", url: "/logs", icon: ScrollText },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Overview", url: "/overview", testId: "nav-overview", icon: LayoutDashboard },
+  { title: "Skills", url: "/skills", testId: "nav-skills", icon: Wrench },
+  { title: "Catalog", url: "/catalog", testId: "nav-catalog", icon: Store },
+  { title: "Agents", url: "/agents", testId: "nav-agents", icon: Bot },
+  { title: "Secrets", url: "/secrets", testId: "nav-secrets", icon: Key },
+  { title: "Sync", url: "/sync", testId: "nav-sync", icon: RefreshCw },
+  { title: "Logs", url: "/logs", testId: "nav-logs", icon: ScrollText },
+  { title: "Settings", url: "/settings", testId: "nav-settings", icon: Settings },
 ];
 
 export function AppSidebar() {
@@ -70,7 +70,7 @@ export function AppSidebar() {
               {navigation.map((item) => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton
-                    render={<Link href={item.url} />}
+                    render={<Link href={item.url} data-testid={item.testId} />}
                     isActive={pathname === item.url}
                   >
                     <item.icon className="mr-2 h-4 w-4" />
@@ -87,7 +87,13 @@ export function AppSidebar() {
           <ConnectionIndicator />
           <div className="flex items-center justify-between">
             <ThemeToggle />
-            <Button variant="ghost" size="icon" onClick={handleLogout}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleLogout}
+              data-testid="logout-btn"
+              aria-label="Sign out"
+            >
               <LogOut className="h-4 w-4" />
             </Button>
           </div>

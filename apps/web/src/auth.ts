@@ -1,15 +1,15 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { isProduction, APP_ENV } from "@/lib/env";
 
 const HUB_URL = process.env.HUB_URL ?? "http://127.0.0.1:3000";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  // Auth.js v5 disables implicit host trust in production. We proxy
-  // requests through Next.js, so the visible Host header (127.0.0.1 /
-  // localhost) doesn't match the canonical AUTH_URL. Trust the incoming
-  // host — this is safe for our deployment because the dashboard sits
-  // behind a reverse proxy that strips/rewrites Host upstream.
-  trustHost: true,
+  // GLIA_APP_ENV=development|test|staging → trustHost=true because the
+  // dashboard sits behind a reverse proxy in those environments (Host
+  // header differs from canonical AUTH_URL). Production deployments must
+  // explicitly set AUTH_URL or ALLOWED_HOSTS via Auth.js configuration.
+  trustHost: !isProduction || APP_ENV === "test" || process.env.AUTH_URL === undefined,
   session: { strategy: "jwt" },
   pages: {
     signIn: "/login",

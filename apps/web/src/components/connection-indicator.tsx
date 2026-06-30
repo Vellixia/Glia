@@ -22,6 +22,8 @@ export function ConnectionIndicator() {
 
   return (
     <div
+      data-testid="connection-indicator"
+      data-state={connectionState}
       className="flex items-center gap-2 text-xs text-muted-foreground"
       title={`Dashboard event stream: ${LABEL[connectionState]}`}
     >
