@@ -20,6 +20,11 @@ const OVERVIEW_QUERY = gql`
       name
       status
     }
+    secrets {
+      credId
+      ready
+      provider
+    }
     syncStatus {
       pending
       inProgress
@@ -32,6 +37,7 @@ const OVERVIEW_QUERY = gql`
 interface OverviewData {
   agents: Array<{ name: string; status: string; model: string }>;
   skills: Array<{ id: string; name: string; status: string }>;
+  secrets: Array<{ credId: string; ready: boolean; provider: string | null }>;
   syncStatus: {
     pending: number;
     inProgress: number;
@@ -51,10 +57,12 @@ export default function OverviewPage() {
   const totalSkills = data?.skills?.length ?? 0;
   const syncPending = data?.syncStatus?.pending ?? 0;
   const syncCompleted = data?.syncStatus?.completed ?? 0;
+  const totalSecrets = data?.secrets?.length ?? 0;
 
   const stats = [
     {
       title: "Active Agents",
+      testId: "kpi-active-agents",
       value: activeAgents,
       icon: Bot,
       description: "Running in sandbox",
@@ -62,6 +70,7 @@ export default function OverviewPage() {
     },
     {
       title: "Skills",
+      testId: "kpi-skills",
       value: totalSkills,
       icon: Wrench,
       description: "Embedded in HelixDB",
@@ -69,13 +78,15 @@ export default function OverviewPage() {
     },
     {
       title: "Secrets",
-      value: "—",
+      testId: "kpi-secrets",
+      value: totalSecrets === 0 ? "0" : String(totalSecrets),
       icon: Key,
       description: "Managed by OpenBao",
-      status: "neutral",
+      status: totalSecrets > 0 ? "healthy" : "neutral",
     },
     {
       title: "Sync",
+      testId: "kpi-sync",
       value: syncCompleted,
       icon: RefreshCw,
       description: syncPending > 0 ? `${syncPending} pending` : "Up to date",
@@ -107,7 +118,7 @@ export default function OverviewPage() {
               </Card>
             ))
           : stats.map((stat) => (
-              <Card key={stat.title}>
+              <Card key={stat.title} data-testid={stat.testId}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">
                     {stat.title}
