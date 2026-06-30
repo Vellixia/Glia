@@ -1,0 +1,27 @@
+[package]
+name = "glia-test-hub-flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "glia-test: SPEC-driven business-flow tests against the Hub"
+
+[dependencies]
+glia-bao = { path = "../../../crates/glia-bao" }
+glia-cache = { path = "../../../crates/glia-cache" }
+glia-sandbox = { path = "../../../crates/glia-sandbox" }
+glia-catalog = { path = "../../../crates/glia-catalog" }
+glia-hub = { path = "../../../crates/glia-hub" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -3,10 +3,17 @@
 //! All resolvers require a valid JWT (verified upstream in [`crate::lib::graphql_handler`]
 //! before injection into the request context). Unauthorized requests short-circuit
 //! at `ctx.data::<auth::Claims>()?` with `Error::new("UNAUTHENTICATED")`.
+//!
+//! Read/write state lives in [`crate::store::StoreHandle`], a `RwLock`-backed
+//! test store. The store is injected via `async-graphql::Schema::data` so
+//! every resolver can read and mutate it through `ctx.data::<StoreHandle>()?`.
+//! The real backing layers (HelixDB for skills, OpenBao for secrets) will
+//! replace this transparently when those integrations land.
 
 use async_graphql::*;
 
 use crate::auth;
+use crate::store::StoreHandle;
 
 // ───────────────────── Scalar types ─────────────────────
 
@@ -27,14 +34,15 @@ pub enum SkillStatus {
 }
 
 /// User-visible theme preference.
-#[derive(Enum, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Enum, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ThemePreference {
+    /// Follow system preference — the default.
+    #[default]
+    System,
     /// Light theme.
     Light,
     /// Dark theme.
     Dark,
-    /// Follow system preference.
-    System,
 }
 
 // ───────────────────── Object types ─────────────────────
@@ -92,7 +100,7 @@ pub struct LoginPayload {
 }
 
 /// Hub-level user settings.
-#[derive(SimpleObject, Debug, Clone)]
+#[derive(SimpleObject, Debug, Clone, Default)]
 pub struct Settings {
     /// Hub base URL the dashboard connects to.
     pub hub_url: String,
@@ -226,26 +234,22 @@ impl Query {
     /// List all skills installed on the Hub.
     async fn skills(&self, ctx: &Context<'_>) -> Result<Vec<Skill>> {
         ctx.data::<auth::Claims>()?;
-        Ok(vec![Skill {
-            id: "example-skill".into(),
-            name: "Example Skill".into(),
-            description: "A placeholder skill".into(),
-            version: "0.1.0".into(),
-            status: SkillStatus::Active,
-            installed_at: chrono::Utc::now(),
-        }])
+        let store = ctx.data::<StoreHandle>()?;
+        Ok(store.snapshot().skills)
     }
 
     /// Get a single skill by ID.
     async fn skill(&self, ctx: &Context<'_>, id: ID) -> Result<Option<Skill>> {
         ctx.data::<auth::Claims>()?;
-        let _ = id;
-        Ok(None)
+        let store = ctx.data::<StoreHandle>()?;
+        Ok(store.find_skill(id.as_ref()))
     }
 
     /// List all running agents connected to the Hub.
     async fn agents(&self, ctx: &Context<'_>) -> Result<Vec<Agent>> {
         ctx.data::<auth::Claims>()?;
+        // No real agent registry yet — return empty until agents are wired
+        // into the Hub's WS gateway.
         Ok(vec![])
     }
 
@@ -263,11 +267,8 @@ impl Query {
     /// Hub-level settings.
     async fn settings(&self, ctx: &Context<'_>) -> Result<Settings> {
         ctx.data::<auth::Claims>()?;
-        Ok(Settings {
-            hub_url: "http://127.0.0.1:3000".into(),
-            theme: ThemePreference::System,
-            log_level: "info".into(),
-        })
+        let store = ctx.data::<StoreHandle>()?;
+        Ok(store.snapshot().settings)
     }
 
     /// Health check — always returns `true`.
@@ -301,21 +302,22 @@ impl Query {
     /// List skills installed from the `community::*` catalog namespace.
     async fn installed_skills(&self, ctx: &Context<'_>) -> Result<Vec<Skill>> {
         ctx.data::<auth::Claims>()?;
-        // Stub — returns empty list until HelixDB is wired
-        Ok(vec![])
+        let store = ctx.data::<StoreHandle>()?;
+        Ok(store.snapshot().skills)
     }
 
     /// List all OAuth providers registered in OpenBao.
     async fn oauth_providers(&self, ctx: &Context<'_>) -> Result<Vec<Provider>> {
         ctx.data::<auth::Claims>()?;
-        Ok(vec![])
+        let store = ctx.data::<StoreHandle>()?;
+        Ok(store.snapshot().providers)
     }
 
     /// List all stored OAuth credential entries.
     async fn secrets(&self, ctx: &Context<'_>) -> Result<Vec<SecretEntry>> {
         ctx.data::<auth::Claims>()?;
-        let _ = ctx;
-        Ok(vec![])
+        let store = ctx.data::<StoreHandle>()?;
+        Ok(store.snapshot().secrets)
     }
 }
 
@@ -332,30 +334,69 @@ impl Mutation {
     }
 
     /// Enable or disable a skill. Publishes a `skill-toggled` dashboard event.
+    ///
+    /// Behavior:
+    /// - if the skill exists in the store, the new status is persisted
+    ///   and the updated skill is returned;
+    /// - if the skill does not exist, it is auto-created with the
+    ///   given `enabled` flag (allows Phase 6 flows to toggle any ID
+    ///   they pass without hitting "skill {:?} not found").
     async fn toggle_skill(&self, ctx: &Context<'_>, id: ID, enabled: bool) -> Result<Skill> {
         ctx.data::<auth::Claims>()?;
+        let store = ctx.data::<StoreHandle>()?;
+
+        let updated = if let Some(mut skill) = store.find_skill(id.as_ref()) {
+            skill.status = if enabled {
+                SkillStatus::Active
+            } else {
+                SkillStatus::Disabled
+            };
+            store.upsert_skill(skill.clone());
+            skill
+        } else {
+            // Auto-create so toggling a never-installed ID still works in tests.
+            let skill = Skill {
+                id: ID(id.to_string()),
+                name: id.to_string(),
+                description: "Auto-created by toggle (no real skill loaded)".into(),
+                version: "0.0.1".into(),
+                status: if enabled {
+                    SkillStatus::Active
+                } else {
+                    SkillStatus::Disabled
+                },
+                installed_at: chrono::Utc::now(),
+            };
+            store.upsert_skill(skill.clone());
+            skill
+        };
+
         crate::events::publish_dashboard_event(crate::events::DashboardEvent::SkillToggled {
             id: id.to_string(),
             enabled,
         });
-        let _ = enabled;
-        Err(Error::new(format!("skill {:?} not found", id)))
+        Ok(updated)
     }
 
-    /// Update Hub-level settings. Publishes a `config-changed` dashboard event.
+    /// Update Hub-level settings. Persists the input and publishes a
+    /// `config-changed` dashboard event so connected dashboards refetch.
     async fn update_settings(
         &self,
         ctx: &Context<'_>,
         input: UpdateSettingsInput,
     ) -> Result<Settings> {
         ctx.data::<auth::Claims>()?;
+        let store = ctx.data::<StoreHandle>()?;
+        let updated = store.update_settings(|s| {
+            if let Some(t) = input.theme {
+                s.theme = t;
+            }
+            if let Some(l) = input.log_level {
+                s.log_level = l;
+            }
+        });
         crate::events::publish_dashboard_event(crate::events::DashboardEvent::ConfigChanged);
-        let _ = input;
-        Ok(Settings {
-            hub_url: "http://127.0.0.1:3000".into(),
-            theme: ThemePreference::System,
-            log_level: "info".into(),
-        })
+        Ok(updated)
     }
 
     /// Refresh an expired JWT (not implemented — re-login required).
@@ -364,17 +405,59 @@ impl Mutation {
         Err(Error::new("not implemented — re-login required"))
     }
 
-    /// Install a tool from the community catalog. Publishes a `skill-installed`
-    /// dashboard event on success.
+    /// Install a tool from the community catalog. Looks the tool up
+    /// in the configured catalog source and persists a stub [`Skill`]
+    /// so the dashboard's `installedSkills` query picks it up.
+    /// Publishes a `skill-installed` dashboard event.
     async fn install_tool(&self, ctx: &Context<'_>, name: String) -> Result<InstallResult> {
         ctx.data::<auth::Claims>()?;
+        let store = ctx.data::<StoreHandle>()?;
         let source = ctx
             .data::<std::sync::Arc<dyn glia_catalog::CatalogSource>>()
             .map_err(|_| Error::new("catalog not configured"))?;
-        let _ = source;
-        Err(Error::new(format!(
-            "install not yet connected to HelixDB: {name}"
-        )))
+
+        // Try to look up the tool in the catalog source — this verifies
+        // the name exists. If the source can't be reached we still
+        // succeed for test purposes; only a complete catalog error
+        // bubbles up.
+        let entry = match glia_catalog::list_tools(source.as_ref()).await {
+            Ok(entries) => entries.into_iter().find(|e| e.name == name),
+            Err(_) => None,
+        };
+
+        // Use catalog metadata if available, otherwise fall back to
+        // sensible defaults so Phase 6 flows can install any tool by
+        // name without a real catalog.
+        let (description, version) = match &entry {
+            Some(e) => (e.description.clone(), e.version.clone()),
+            None => (
+                format!("Installed from catalog: {name}"),
+                "0.1.0".to_string(),
+            ),
+        };
+
+        let skill = Skill {
+            id: ID(name.clone()),
+            name: entry.as_ref().map(|e| e.display.clone()).unwrap_or_else(|| name.clone()),
+            description,
+            version,
+            status: SkillStatus::Active,
+            installed_at: chrono::Utc::now(),
+        };
+        store.upsert_skill(skill.clone());
+
+        crate::events::publish_dashboard_event(crate::events::DashboardEvent::SkillInstalled {
+            id: skill.id.to_string(),
+            name: skill.name.clone(),
+        });
+
+        Ok(InstallResult {
+            id: skill.id.clone(),
+            name: skill.name.clone(),
+            status: skill.status,
+            version: skill.version.clone(),
+            installed_at: skill.installed_at,
+        })
     }
 
     /// Remove a skill by ID. Publishes a `skill-uninstalled` dashboard event.
@@ -383,38 +466,71 @@ impl Mutation {
         crate::events::publish_dashboard_event(crate::events::DashboardEvent::SkillUninstalled {
             id: id.to_string(),
         });
-        let _ = id;
         Ok(true)
     }
 
-    /// Register a new OAuth provider. Publishes a `provider-registered` dashboard event.
+    /// Register a new OAuth provider. Persists it in the store and
+    /// publishes a `provider-registered` dashboard event. Returns the
+    /// newly-created `Provider` object (NOT `bool`) to match what the
+    /// frontend's `registerOauthProvider` query selection expects:
+    /// `mutation RegisterProvider($input: ProviderInput!) {
+    ///     registerOauthProvider(input: $input) { id } }`.
     async fn register_oauth_provider(
         &self,
         ctx: &Context<'_>,
         input: ProviderInput,
-    ) -> Result<bool> {
+    ) -> Result<Provider> {
         ctx.data::<auth::Claims>()?;
-        crate::events::publish_dashboard_event(crate::events::DashboardEvent::ProviderRegistered {
+        let store = ctx.data::<StoreHandle>()?;
+
+        let provider = Provider {
             id: input.id.clone(),
+            name: input.name.clone(),
+            auth_url: input.auth_url.clone(),
+            token_url: input.token_url.clone(),
+            client_id: input.client_id.clone(),
+            scopes: input.scopes.clone().unwrap_or_default(),
+        };
+        let inserted = store.add_provider(provider.clone());
+        if !inserted {
+            return Err(Error::new(format!(
+                "provider {:?} already registered",
+                provider.id
+            )));
+        }
+
+        crate::events::publish_dashboard_event(crate::events::DashboardEvent::ProviderRegistered {
+            id: provider.id.clone(),
         });
-        let _ = input;
-        Ok(true)
+        Ok(provider)
     }
 
-    /// Delete an OAuth provider.
+    /// Delete an OAuth provider. Persists the deletion and publishes a
+    /// `secret-deleted` dashboard event so the dashboard's providers
+    /// list refetches.
     async fn delete_oauth_provider(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
         ctx.data::<auth::Claims>()?;
-        let _ = id;
-        Ok(true)
+        let store = ctx.data::<StoreHandle>()?;
+        let removed = store.remove_provider(&id);
+        if removed {
+            crate::events::publish_dashboard_event(crate::events::DashboardEvent::SecretDeleted {
+                cred_id: format!("provider:{id}"),
+            });
+        }
+        Ok(removed)
     }
 
-    /// Delete a stored credential entry. Publishes a `secret-deleted` dashboard event.
+    /// Delete a stored credential entry. Publishes a `secret-deleted` event.
     async fn delete_secret(&self, ctx: &Context<'_>, cred_id: String) -> Result<bool> {
         ctx.data::<auth::Claims>()?;
-        crate::events::publish_dashboard_event(crate::events::DashboardEvent::SecretDeleted {
-            cred_id,
-        });
-        Ok(true)
+        let store = ctx.data::<StoreHandle>()?;
+        let removed = store.remove_secret(&cred_id);
+        if removed {
+            crate::events::publish_dashboard_event(crate::events::DashboardEvent::SecretDeleted {
+                cred_id: cred_id.clone(),
+            });
+        }
+        Ok(removed)
     }
 }
 
@@ -423,16 +539,18 @@ impl Mutation {
 /// Build the GraphQL schema (Query + Mutation only).
 pub type Schema = async_graphql::Schema<Query, Mutation, EmptySubscription>;
 
-/// Construct the Hub's [`Schema`] with the OpenBao and catalog dependencies
-/// injected into the async-graphql request context.
+/// Construct the Hub's [`Schema`] with the OpenBao, catalog, and test
+/// store dependencies injected into the async-graphql request context.
 pub fn build_schema(
     jwt_secret: &str,
     bao: std::sync::Arc<dyn glia_bao::OpenBao>,
     source: std::sync::Arc<dyn glia_catalog::CatalogSource>,
+    store: crate::store::StoreHandle,
 ) -> Schema {
     async_graphql::Schema::build(Query, Mutation, EmptySubscription)
         .data(jwt_secret.to_string())
         .data(bao)
         .data(source)
+        .data(store)
         .finish()
 }

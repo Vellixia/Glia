@@ -17,7 +17,7 @@ import { createColumnHelper, type SortingState, type PaginationState } from "@ta
 import { Wrench, Search } from "lucide-react";
 
 const SKILLS_QUERY = gql`
-  query GetSkills($first: Int!, $offset: Int!, $search: String) {
+  query GetSkills {
     skills {
       id
       name
@@ -68,12 +68,7 @@ export default function SkillsPage() {
 
   const { data, isLoading, isFetching } = useQuery<SkillsResponse>({
     queryKey: skillKeys.list({ search: debouncedSearch }, pagination.pageSize),
-    queryFn: () =>
-      graphqlClient.request(SKILLS_QUERY, {
-        first: pagination.pageSize,
-        offset: pagination.pageIndex * pagination.pageSize,
-        search: debouncedSearch || undefined,
-      }),
+    queryFn: () => graphqlClient.request(SKILLS_QUERY),
     placeholderData: (prev) => prev,
   });
 
@@ -81,15 +76,20 @@ export default function SkillsPage() {
     mutationFn: (variables: { id: string; enabled: boolean }) =>
       graphqlClient.request(TOGGLE_SKILL_MUTATION, variables),
     onMutate: async (variables) => {
-      await queryClient.cancelQueries({
-        queryKey: skillKeys.all,
+      // Cancel + take a snapshot of *every* query in the `skillKeys.lists()`
+      // subtree (prefix match — covers all paginated/filtered variants).
+      // The previous version wrote to `skillKeys.all`, a bare ["skills"]
+      // key with no matching active query, so the optimistic update was
+      // invisible and rollback restored `undefined`.
+      await queryClient.cancelQueries({ queryKey: skillKeys.lists() });
+
+      const previousSkills = queryClient.getQueriesData<SkillsResponse>({
+        queryKey: skillKeys.lists(),
       });
 
-      const previousSkills = queryClient.getQueryData(skillKeys.all);
-
-      queryClient.setQueriesData(
-        { queryKey: skillKeys.all },
-        (old: SkillsResponse | undefined) => {
+      queryClient.setQueriesData<SkillsResponse | undefined>(
+        { queryKey: skillKeys.lists() },
+        (old) => {
           if (!old) return old;
           return {
             ...old,
@@ -99,7 +99,7 @@ export default function SkillsPage() {
                     ...skill,
                     status: variables.enabled ? "ACTIVE" : "DISABLED",
                   }
-                : skill
+                : skill,
             ),
           };
         }
@@ -108,12 +108,15 @@ export default function SkillsPage() {
       return { previousSkills };
     },
     onError: (_err, _variables, context) => {
+      // Restore every snapshot we took, not just the first.
       if (context?.previousSkills) {
-        queryClient.setQueryData(skillKeys.all, context.previousSkills);
+        for (const [key, value] of context.previousSkills) {
+          queryClient.setQueryData<SkillsResponse>(key, value);
+        }
       }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: skillKeys.all });
+      queryClient.invalidateQueries({ queryKey: skillKeys.lists() });
     },
   });
 

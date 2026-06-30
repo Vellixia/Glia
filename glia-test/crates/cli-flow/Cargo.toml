@@ -1,0 +1,29 @@
+[package]
+name = "glia-test-cli-flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "glia-test: SPEC-driven CLI flow tests (exit codes, subcommands)"
+
+[dependencies]
+glia-hub = { path = "../../../crates/glia-hub" }
+glia-cache = { path = "../../../crates/glia-cache" }
+glia-bao = { path = "../../../crates/glia-bao" }
+glia-catalog = { path = "../../../crates/glia-catalog" }
+glia-proto = { path = "../../../crates/glia-proto" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+chrono = "0.4"
+futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+tokio-tungstenite = "0.26"
+axum = "0.8"
+
+[lints]
+workspace = true

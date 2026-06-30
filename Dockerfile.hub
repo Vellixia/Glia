@@ -4,10 +4,15 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /build
 
-# Cache deps first.
+# Cache deps first. The workspace lists glia-test/crates/* as members
+# (SPEC-driven test infrastructure) so we must ship them in the build
+# context for `cargo` to resolve the workspace manifest.
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-RUN mkdir -p target && cargo build --release -p glia-hub --bin glia-hub
+COPY glia-test glia-test
+# Cap cargo to 2 jobs so the candle ML crate (glia-embed) doesn't OOM the
+# builder on memory-constrained hosts (signal 9, SIGKILL on glia-embed).
+RUN mkdir -p target && CARGO_BUILD_JOBS=2 cargo build --release -p glia-hub --bin glia-hub
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*

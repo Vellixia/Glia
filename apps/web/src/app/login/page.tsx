@@ -48,6 +48,8 @@ export default function LoginPage() {
               <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
+                data-testid="login-password"
+                name="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -55,7 +57,12 @@ export default function LoginPage() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button
+              type="submit"
+              data-testid="login-submit"
+              className="w-full"
+              disabled={loading}
+            >
               {loading ? "Signing in..." : "Sign in"}
             </Button>
           </form>

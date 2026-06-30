@@ -1,0 +1,18 @@
+# Local-only — agent-browser Hard Boundry.
+# Throwaway per-run state.
+
+# Browser artifacts (screenshots per flow)
+/artifacts/
+/state/
+/screenshots/
+
+# Env (per-developer)
+.env
+.env.local
+
+# tsx / node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

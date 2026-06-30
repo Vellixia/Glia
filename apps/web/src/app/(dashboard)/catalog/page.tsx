@@ -38,7 +38,8 @@ interface CatalogEntry {
 }
 
 interface CatalogIndex {
-  version: number;
+  /** Schema version from the upstream catalog JSON; not used by the GraphQL path. */
+  version?: number;
   tools: CatalogEntry[];
 }
 
@@ -90,15 +91,34 @@ const REMOVE_SKILL_MUTATION = gql`
 
 // --- Helpers ---
 
-const CATALOG_URL =
-  "https://raw.githubusercontent.com/Vellixia/community-catalog/main/catalog.json";
+/**
+ * Fetch the catalog via the Hub's `catalogTools` GraphQL query.
+ * Previously this page hit a hardcoded GitHub raw URL
+ * (`raw.githubusercontent.com/Vellixia/community-catalog/...`) which
+ * 404'd in production. Going through the Hub keeps everything on
+ * the loopback-only path (Hard Boundry) and lets the Hub own the
+ * catalog source configuration (`GLIA_CATALOG_URL`).
+ */
+const CATALOG_TOOLS_QUERY = gql`
+  query GetCatalogTools {
+    catalogTools {
+      name
+      display
+      description
+      version
+      stacks
+      creds
+    }
+  }
+`;
+
+interface CatalogToolsResponse {
+  catalogTools: CatalogEntry[];
+}
 
 async function fetchCatalog(): Promise<CatalogIndex> {
-  const res = await fetch(CATALOG_URL);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch catalog: ${res.statusText}`);
-  }
-  return res.json();
+  const res = await graphqlClient.request<CatalogToolsResponse>(CATALOG_TOOLS_QUERY);
+  return { tools: res.catalogTools ?? [] };
 }
 
 // --- Merged type ---

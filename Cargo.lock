@@ -1619,6 +1619,7 @@ dependencies = [
  "glia-helix",
  "glia-hooks",
  "glia-hub",
+ "glia-proto",
  "glia-sandbox",
  "reqwest 0.12.28",
  "serde",
@@ -1816,6 +1817,53 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "glia-test-cli-flow"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "futures-util",
+ "glia-bao",
+ "glia-cache",
+ "glia-catalog",
+ "glia-hub",
+ "glia-proto",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+]
+
+[[package]]
+name = "glia-test-hashgen"
+version = "0.4.0"
+dependencies = [
+ "argon2",
+]
+
+[[package]]
+name = "glia-test-hub-flow"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "glia-bao",
+ "glia-cache",
+ "glia-catalog",
+ "glia-hub",
+ "glia-sandbox",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

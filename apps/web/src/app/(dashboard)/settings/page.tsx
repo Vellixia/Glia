@@ -189,7 +189,11 @@ export default function SettingsPage() {
               </Select>
             </div>
 
-            <Button type="submit" disabled={updateMutation.isPending}>
+            <Button
+              type="submit"
+              data-testid="settings-save"
+              disabled={updateMutation.isPending}
+            >
               {updateMutation.isPending ? "Saving..." : "Save Settings"}
             </Button>
           </form>

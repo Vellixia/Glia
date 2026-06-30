@@ -299,7 +299,7 @@ function AddProviderDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button>
+          <Button data-testid="add-provider-trigger">
             <Plus className="h-4 w-4" />
             Add Provider
           </Button>
@@ -417,7 +417,11 @@ function AddProviderDialog() {
           </div>
           <DialogFooter>
             <DialogClose render={<Button variant="outline" type="button">Cancel</Button>} />
-            <Button type="submit" disabled={registerMutation.isPending}>
+            <Button
+              type="submit"
+              data-testid="provider-submit"
+              disabled={registerMutation.isPending}
+            >
               {registerMutation.isPending ? "Registering..." : "Register Provider"}
             </Button>
           </DialogFooter>
